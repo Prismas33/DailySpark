@@ -1,0 +1,11 @@
+{
+  "include": [
+    "src/**/*.ts",
+    "lib/**/*.ts",
+    "types/**/*.d.ts"
+  ],
+  "compilerOptions": {
+    "strict": true,
+    "forceConsistentCasingInFileNames": true
+  }
+}
