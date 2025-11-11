@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { AdminRole } from './hooks/useAdminPermissions';
 
 // Secret key for JWT - ideally, this should be in an environment variable
 const JWT_SECRET = process.env.JWT_SECRET || 'your_secret_key_here';

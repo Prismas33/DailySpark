@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/firebase';
+import { adminDb } from '@/lib/firebaseServer';
 import axios from 'axios';
 
 // Function to send to the Cloud Function endpoint
 async function callCloudFunction(data: any) {
   try {
     // URL of the manualSocialMediaPromotion function in Firebase Cloud Functions
-    const cloudFunctionUrl = process.env.FIREBASE_FUNCTION_URL || 'https://manualsocialmediapromotion-cvmzclfema-uc.a.run.app';
+    const cloudFunctionUrl = process.env.FIREBASE_FUNCTION_URL;
+    
+    if (!cloudFunctionUrl) {
+      throw new Error('FIREBASE_FUNCTION_URL environment variable is not configured');
+    }
     
     // Adding headers for CORS (DO NOT include 'Origin' in server-to-server calls)
     const headers = {
@@ -44,7 +48,8 @@ export async function POST(req: NextRequest) {
 
       // Validate job ID if provided
       if (jobId) {
-        const jobDoc = await db.collection('jobs').doc(jobId).get();
+        if (!adminDb) throw new Error('Firebase Admin not initialized');
+        const jobDoc = await adminDb.collection('jobs').doc(jobId).get();
 
         if (!jobDoc.exists) {
           return NextResponse.json({ error: 'Invalid job ID provided' }, { status: 400 });
@@ -75,7 +80,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Check if the job exists before sending
-    const jobDoc = await db.collection('jobs').doc(jobId).get();
+  if (!adminDb) throw new Error('Firebase Admin not initialized');
+  const jobDoc = await adminDb.collection('jobs').doc(jobId).get();
 
     if (!jobDoc.exists) {
       return NextResponse.json({ error: 'Job not found' }, { status: 404 });
@@ -86,7 +92,7 @@ export async function POST(req: NextRequest) {
 
     // Update the promotion counter in the job (also done in the Cloud Function, but we ensure it here)
     const jobData = jobDoc.data();
-    await db.collection('jobs').doc(jobId).update({
+    await adminDb.collection('jobs').doc(jobId).update({
       socialMediaPromotionCount: (jobData?.socialMediaPromotionCount || 0) + 1,
       socialMediaPromotionLastSent: new Date().toISOString(),
     });

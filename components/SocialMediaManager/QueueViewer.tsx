@@ -2,23 +2,20 @@
 
 import React, { useState, useEffect } from 'react';
 
-interface QueueJob {
+interface QueuedPost {
   id: string;
-  jobId?: string;
-  text: string;
+  content: string;
   platforms: string[];
   imageUrl?: string;
-  scheduledTime: string;
+  scheduledAt: string;
   status: string;
-  attempts?: number;
-  lastAttempt?: string;
   createdAt: string;
 }
 
 const QueueViewer: React.FC = () => {
-  const [queueJobs, setQueueJobs] = useState<QueueJob[]>([]);
-  const [queueLoading, setQueueLoading] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [posts, setPosts] = useState<QueuedPost[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Format date utility
   const formatDate = (dateValue: string | null | undefined, format: 'locale' | 'localedate' | 'localetime' = 'locale'): string => {
@@ -41,188 +38,178 @@ const QueueViewer: React.FC = () => {
     }
   };
 
-  // Load queue jobs
-  const loadQueueJobs = async () => {
-    setQueueLoading(true);
+  // Load queue
+  const loadQueue = async () => {
+    setLoading(true);
     try {
       const response = await fetch('/api/social-media-queue');
       const data = await response.json();
       
       if (data.success) {
-        setQueueJobs(data.jobs || []);
+        setPosts(data.posts || []);
       } else {
-        setMessage(`Error loading queue: ${data.error}`);
+        setMessage({ type: 'error', text: data.error || 'Failed to load queue' });
       }
     } catch (error) {
-      setMessage('Error loading queue. Please try again.');
+      setMessage({ type: 'error', text: 'Network error. Please try again.' });
     } finally {
-      setQueueLoading(false);
+      setLoading(false);
     }
   };
 
-  // Load jobs on component mount
+  // Load on mount
   useEffect(() => {
-    loadQueueJobs();
+    loadQueue();
   }, []);
 
-  // Delete job from queue
-  const deleteQueueJob = async (jobId: string) => {
+  // Delete post from queue
+  const deletePost = async (id: string) => {
+    if (!confirm('Remove this scheduled post?')) return;
+    
     try {
-      const response = await fetch('/api/social-media-queue', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobId }),
+      const response = await fetch(`/api/social-media-queue?id=${id}`, {
+        method: 'DELETE'
       });
 
       const result = await response.json();
       if (result.success) {
-        setMessage('✅ Job removed from queue!');
-        loadQueueJobs(); // Reload the queue
+        setMessage({ type: 'success', text: 'Post removed!' });
+        loadQueue();
       } else {
-        setMessage(`❌ Error removing job: ${result.error}`);
+        setMessage({ type: 'error', text: result.error || 'Failed to delete' });
       }
     } catch (error) {
-      setMessage('❌ Error removing job. Please try again.');
+      setMessage({ type: 'error', text: 'Delete failed. Please try again.' });
     }
   };
 
-  // Retry failed job
-  const retryJob = async (jobId: string) => {
-    try {
-      const response = await fetch('/api/social-media-queue', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jobId, action: 'retry' }),
-      });
-
-      const result = await response.json();
-      if (result.success) {
-        setMessage('✅ Job scheduled for retry!');
-        loadQueueJobs(); // Reload the queue
-      } else {
-        setMessage(`❌ Error retrying job: ${result.error}`);
-      }
-    } catch (error) {
-      setMessage('❌ Error retrying job. Please try again.');
-    }
+  // Status badge styling
+  const getStatusBadge = (status: string) => {
+    const statusLower = status.toLowerCase();
+    if (statusLower === 'scheduled') return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30';
+    if (statusLower === 'pending') return 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30';
+    if (statusLower === 'processing') return 'bg-blue-500/20 text-blue-300 border-blue-500/30';
+    if (statusLower === 'completed') return 'bg-green-500/20 text-green-300 border-green-500/30';
+    if (statusLower === 'failed') return 'bg-red-500/20 text-red-300 border-red-500/30';
+    return 'bg-gray-500/20 text-gray-300 border-gray-500/30';
   };
 
-  // Get status color
-  const getStatusColor = (status: string) => {
-    switch (status.toLowerCase()) {
-      case 'pending': return 'text-yellow-400 bg-yellow-900/30';
-      case 'processing': return 'text-blue-400 bg-blue-900/30';
-      case 'completed': return 'text-green-400 bg-green-900/30';
-      case 'failed': return 'text-red-400 bg-red-900/30';
-      default: return 'text-gray-400 bg-gray-900/30';
-    }
+  // Platform icon
+  const getPlatformIcon = (platform: string) => {
+    const p = platform.toLowerCase();
+    if (p === 'linkedin') return '💼';
+    if (p === 'x' || p === 'twitter') return '𝕏';
+    return '📱';
   };
 
   return (
-    <div className="bg-black/40 backdrop-blur-sm rounded-xl border border-gray-700 p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-orange-300">📋 Queue Manager</h3>
+    <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl border border-gray-700/50 shadow-xl p-6">
+      <div className="flex items-center justify-between mb-6">
+        <h3 className="text-xl font-bold bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent flex items-center gap-2">
+          <span className="text-2xl">📋</span>
+          Scheduled Queue
+        </h3>
         <button
-          onClick={loadQueueJobs}
-          disabled={queueLoading}
-          className="px-3 py-1 bg-orange-500 text-white text-xs rounded hover:bg-orange-600 flex items-center"
+          onClick={loadQueue}
+          disabled={loading}
+          className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 text-white text-sm font-medium rounded-lg hover:from-emerald-600 hover:to-teal-600 disabled:opacity-50 flex items-center gap-2 transition-all transform hover:scale-105 shadow-lg"
         >
-          <span className="mr-1">🔄</span>
-          {queueLoading ? 'Loading...' : 'Refresh'}
+          <span>🔄</span>
+          {loading ? 'Loading...' : 'Refresh'}
         </button>
       </div>
 
       {/* Message Display */}
       {message && (
-        <div className={`mb-4 p-3 rounded-lg text-sm ${
-          message.includes('✅') ? 'bg-green-900/50 border-green-500 text-green-300' : 'bg-red-900/50 border-red-500 text-red-300'
-        } border`}>
-          {message}
+        <div className={`mb-4 p-4 rounded-xl text-sm font-medium ${
+          message.type === 'success' 
+            ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300' 
+            : 'bg-red-500/10 border border-red-500/30 text-red-300'
+        }`}>
+          {message.type === 'success' ? '✅ ' : '❌ '}{message.text}
         </div>
       )}
 
-      {/* Queue Jobs */}
-      {queueLoading ? (
-        <div className="flex items-center justify-center py-8">
-          <div className="w-8 h-8 border-4 border-orange-400 border-t-transparent rounded-full animate-spin"></div>
-          <span className="ml-3 text-gray-300">Loading queue...</span>
+      {/* Queue Posts */}
+      {loading ? (
+        <div className="flex flex-col items-center justify-center py-12">
+          <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+          <span className="mt-4 text-gray-300 font-medium">Loading queue...</span>
         </div>
-      ) : queueJobs.length === 0 ? (
-        <div className="text-center py-8 text-gray-400">
-          <div className="text-4xl mb-4">📭</div>
-          <p>Queue is empty</p>
-          <p className="text-sm mt-2">Scheduled posts will appear here</p>
+      ) : posts.length === 0 ? (
+        <div className="text-center py-12 text-gray-400">
+          <div className="text-6xl mb-4">📭</div>
+          <p className="text-lg font-medium text-gray-300 mb-2">No scheduled posts</p>
+          <p className="text-sm">Posts you schedule will appear here</p>
         </div>
       ) : (
-        <div className="space-y-4 max-h-96 overflow-y-auto">
-          {queueJobs.map((job) => (
-            <div key={job.id} className="bg-black/30 rounded-lg border border-gray-600 p-4">
-              <div className="flex justify-between items-start mb-2">
+        <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
+          {posts.map((post) => (
+            <div key={post.id} className="bg-gray-800/50 rounded-xl border border-gray-700/50 p-5 hover:border-gray-600 transition-all">
+              <div className="flex justify-between items-start gap-4 mb-3">
                 <div className="flex-1">
-                  <div className="flex items-center space-x-2 mb-2">
-                    <span className={`px-2 py-1 rounded-full text-xs ${getStatusColor(job.status)}`}>
-                      {job.status.toUpperCase()}
+                  <div className="flex items-center flex-wrap gap-2 mb-3">
+                    <span className={`px-3 py-1 rounded-lg text-xs font-semibold border ${getStatusBadge(post.status)}`}>
+                      {post.status.toUpperCase()}
                     </span>
-                    {job.jobId && (
-                      <span className="px-2 py-1 rounded-full text-xs bg-blue-900/30 text-blue-400">
-                        Job: {job.jobId}
-                      </span>
-                    )}
+                    <span className="text-xs text-gray-400">
+                      📅 {formatDate(post.scheduledAt)}
+                    </span>
                   </div>
                   
-                  <p className="text-gray-300 text-sm mb-2 line-clamp-2">
-                    {job.text.length > 100 ? `${job.text.substring(0, 100)}...` : job.text}
+                  <p className="text-gray-200 text-sm mb-3 leading-relaxed">
+                    {post.content.length > 150 ? `${post.content.substring(0, 150)}...` : post.content}
                   </p>
                   
-                  <div className="flex flex-wrap gap-1 mb-2">
-                    {job.platforms.map((platform) => (
-                      <span key={platform} className="px-2 py-1 bg-gray-700 text-xs rounded text-gray-300">
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {post.platforms.map((platform) => (
+                      <span key={platform} className="px-2 py-1 bg-gray-700/50 text-xs rounded-lg text-gray-300 font-medium flex items-center gap-1">
+                        <span>{getPlatformIcon(platform)}</span>
                         {platform}
                       </span>
                     ))}
                   </div>
-                  
-                  <div className="text-xs text-gray-400 space-y-1">
-                    <div>📅 Scheduled: {formatDate(job.scheduledTime)}</div>
-                    <div>🕒 Created: {formatDate(job.createdAt)}</div>
-                    {job.attempts && job.attempts > 0 && (
-                      <div>🔄 Attempts: {job.attempts}</div>
-                    )}
-                    {job.lastAttempt && (
-                      <div>⏰ Last attempt: {formatDate(job.lastAttempt)}</div>
-                    )}
-                  </div>
                 </div>
                 
-                {job.imageUrl && (
+                {post.imageUrl && (
                   <img 
-                    src={job.imageUrl} 
-                    alt="Post media" 
-                    className="w-16 h-16 object-cover rounded ml-4"
+                    src={post.imageUrl} 
+                    alt="Post image" 
+                    className="w-20 h-20 object-cover rounded-lg shadow-lg"
                   />
                 )}
               </div>
               
-              <div className="flex space-x-2 pt-2 border-t border-gray-600">
-                {job.status.toLowerCase() === 'failed' && (
-                  <button
-                    onClick={() => retryJob(job.id)}
-                    className="px-3 py-1 bg-yellow-600 text-white text-xs rounded hover:bg-yellow-700"
-                  >
-                    🔄 Retry
-                  </button>
-                )}
+              <div className="flex justify-end pt-3 border-t border-gray-700/50">
                 <button
-                  onClick={() => deleteQueueJob(job.id)}
-                  className="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700"
+                  onClick={() => deletePost(post.id)}
+                  className="px-4 py-2 bg-red-500/20 text-red-300 text-xs font-medium rounded-lg hover:bg-red-500/30 border border-red-500/30 transition-all flex items-center gap-2"
                 >
-                  🗑️ Delete
+                  <span>🗑️</span>
+                  Remove
                 </button>
               </div>
             </div>
           ))}
         </div>
       )}
+      
+      <style jsx>{`
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: rgba(31, 41, 55, 0.5);
+          border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: rgba(16, 185, 129, 0.3);
+          border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: rgba(16, 185, 129, 0.5);
+        }
+      `}</style>
     </div>
   );
 };

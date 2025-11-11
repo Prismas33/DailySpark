@@ -1,18 +1,8 @@
 import { onRequest } from "firebase-functions/v2/https";
-import { getFirestore } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
 import { logSystemActivity } from "./logSystem";
 import * as cors from 'cors';
 import { TwitterApi } from 'twitter-api-v2';
-
-// Importar funções reutilizáveis do scheduler
-import {
-  postToLinkedIn,
-  postToTelegram,
-  postToX,
-  renderTemplateFromJob,
-  SocialMediaJob,
-  uploadImageToLinkedIn
-} from "./socialMediaPromotionScheduler";
 
 // Configurar CORS
 const allowedOrigins = [
@@ -37,57 +27,44 @@ const corsHandler = (cors.default || cors)({
 });
 
 /**
- * Post manual content directly to Telegram (text only)
+ * Extract storage path from Firebase Storage URL
+ * Example: https://firebasestorage.googleapis.com/v0/b/bucket/o/path%2Fto%2Ffile.jpg?alt=media
+ * Returns: path/to/file.jpg
  */
-async function postManualToTelegram(text: string, imageUrl?: string): Promise<boolean> {
+function extractStoragePathFromUrl(url: string): string | null {
   try {
-    const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-    const TELEGRAM_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
-
-    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHANNEL_ID) {
-      console.error('🔴 [TELEGRAM] Missing environment variables');
-      return false;
+    const match = url.match(/\/o\/(.+?)\?/);
+    if (match && match[1]) {
+      return decodeURIComponent(match[1]);
     }
+    return null;
+  } catch (error) {
+    console.error('[Storage] Error extracting path from URL:', error);
+    return null;
+  }
+}
 
-    const hasMedia = !!imageUrl;
-    const url = hasMedia 
-      ? `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`
-      : `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+/**
+ * Clean up media from Firebase Storage after successful post
+ */
+async function cleanupStorageMedia(mediaUrl: string): Promise<void> {
+  if (!mediaUrl || !mediaUrl.includes('firebasestorage.googleapis.com')) {
+    return; // Not a Firebase Storage URL, skip
+  }
+  
+  try {
+    const storage = getStorage();
+    const mediaPath = extractStoragePathFromUrl(mediaUrl);
     
-    const payload = hasMedia
-      ? {
-          chat_id: TELEGRAM_CHANNEL_ID,
-          photo: imageUrl,
-          caption: text,
-          parse_mode: 'HTML',
-          disable_web_page_preview: false
-        }
-      : {
-          chat_id: TELEGRAM_CHANNEL_ID,
-          text: text,
-          parse_mode: 'HTML',
-          disable_web_page_preview: false
-        };
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-    
-    if (response.ok) {
-      console.log('🟢 [TELEGRAM] Manual post sent successfully');
-      return true;
+    if (mediaPath) {
+      await storage.bucket().file(mediaPath).delete();
+      console.log(`[ManualSocialMedia] ✅ Cleaned up media from Storage: ${mediaPath}`);
     } else {
-      const errorData = await response.text();
-      console.error('🔴 [TELEGRAM] Failed to send manual post:', errorData);
-      return false;
+      console.warn(`[ManualSocialMedia] ⚠️ Could not extract storage path from URL: ${mediaUrl}`);
     }
-  } catch (error: any) {
-    console.error('🔴 [TELEGRAM] Error sending manual post:', error.message);
-    return false;
+  } catch (cleanupError: any) {
+    // Don't fail the whole process if cleanup fails
+    console.warn(`[ManualSocialMedia] ⚠️ Failed to clean up media:`, cleanupError.message);
   }
 }
 
@@ -159,17 +136,19 @@ async function postManualToX(text: string, imageUrl?: string): Promise<boolean> 
 async function postManualToLinkedIn(text: string, imageUrl?: string): Promise<boolean> {
   try {
     const LINKEDIN_ACCESS_TOKEN = process.env.LINKEDIN_ACCESS_TOKEN;
-    const LINKEDIN_ORGANIZATION_ID = process.env.LINKEDIN_ORGANIZATION_ID;
+    const LINKEDIN_PERSON_ID = process.env.LINKEDIN_PERSON_ID;
 
-    if (!LINKEDIN_ACCESS_TOKEN || !LINKEDIN_ORGANIZATION_ID) {
-      console.error('🔴 [LINKEDIN] Missing access token or organization ID');
+    console.log('[LinkedIn] 🔍 DEBUG - Using Person ID:', LINKEDIN_PERSON_ID);
+
+    if (!LINKEDIN_ACCESS_TOKEN || !LINKEDIN_PERSON_ID) {
+      console.error('🔴 [LINKEDIN] Missing access token or person ID');
       return false;
     }
 
     const url = 'https://api.linkedin.com/v2/ugcPosts';
     
     let payload: any = {
-      author: `urn:li:organization:${LINKEDIN_ORGANIZATION_ID}`,
+      author: `urn:li:person:${LINKEDIN_PERSON_ID}`,
       lifecycleState: 'PUBLISHED',
       specificContent: {
         'com.linkedin.ugc.ShareContent': {
@@ -184,23 +163,10 @@ async function postManualToLinkedIn(text: string, imageUrl?: string): Promise<bo
       }
     };
 
-    // If there's an image, add it (like Telegram)
+    // Note: Image upload for personal profiles works differently than organizations
+    // For now, posting text-only to personal profile
     if (imageUrl) {
-      console.log('🔄 [LINKEDIN] Adding image to post...');
-      const assetUrn = await uploadImageToLinkedIn(imageUrl, LINKEDIN_ACCESS_TOKEN, LINKEDIN_ORGANIZATION_ID);
-      
-      if (assetUrn) {
-        payload.specificContent['com.linkedin.ugc.ShareContent'].shareMediaCategory = 'IMAGE';
-        payload.specificContent['com.linkedin.ugc.ShareContent'].media = [
-          {
-            status: 'READY',
-            media: assetUrn
-          }
-        ];
-        console.log('🟢 [LINKEDIN] Image added to post');
-      } else {
-        console.warn('🟡 [LINKEDIN] Failed to upload image, posting text only');
-      }
+      console.warn('� [LINKEDIN] Image uploads not supported for personal profiles, posting text only');
     }
 
     const response = await fetch(url, {
@@ -234,18 +200,12 @@ async function postCustomContentToPlatforms(postData: {
   text: string;
   platforms: string[];
   imageUrl?: string;
-  jobId?: string;
 }) {
   const results = [];
   console.log('[ManualSocialMedia] Starting custom post to platforms:', postData.platforms);
 
   for (const platform of postData.platforms) {
     let postText = postData.text;
-    
-    // Add job link if jobId is provided
-    if (postData.jobId) {
-      postText += `\n\n🔗 Find the job here: https://gate33.net/jobs/${postData.jobId}`;
-    }
 
     try {
       let success = false;
@@ -259,17 +219,6 @@ async function postCustomContentToPlatforms(postData: {
             success,
             message: success ? 'Successfully posted to LinkedIn' : 'Failed to post to LinkedIn',
             postId: success ? `linkedin_${Date.now()}` : null
-          });
-          break;
-          
-        case 'telegram':
-          console.log('[ManualSocialMedia] Posting to Telegram...');
-          success = await postManualToTelegram(postText, postData.imageUrl);
-          results.push({
-            platform: 'telegram',
-            success,
-            message: success ? 'Successfully posted to Telegram' : 'Failed to post to Telegram',
-            postId: success ? `telegram_${Date.now()}` : null
           });
           break;
           
@@ -323,7 +272,7 @@ export const manualSocialMediaPromotion = onRequest(async (req, res) => {
 
       // Handle new manual posting format
       if (requestBody.type === 'manual') {
-        const { text, platforms, imageUrl, jobId } = requestBody;
+        const { text, platforms, imageUrl } = requestBody;
         
         if (!text || !platforms || platforms.length === 0) {
           res.status(400).json({ error: "Text and at least one platform are required for manual posting" });
@@ -331,24 +280,19 @@ export const manualSocialMediaPromotion = onRequest(async (req, res) => {
         }
 
         console.log('[ManualSocialMedia] Processing manual post request');
-        
-        // Validate job ID if provided
-        if (jobId) {
-          const db = getFirestore();
-          const jobSnap = await db.collection("jobs").doc(jobId).get();
-          if (!jobSnap.exists) {
-            res.status(400).json({ error: "Invalid job ID provided" });
-            return;
-          }
-        }
 
         // Send to selected platforms
         const results = await postCustomContentToPlatforms({
           text,
           platforms,
-          imageUrl,
-          jobId
+          imageUrl
         });
+
+        // Clean up media from Storage if at least one platform succeeded
+        const anySuccess = results.some(r => r.success);
+        if (anySuccess && imageUrl) {
+          await cleanupStorageMedia(imageUrl);
+        }
 
         // Log the manual post activity
         await logSystemActivity(
@@ -359,7 +303,6 @@ export const manualSocialMediaPromotion = onRequest(async (req, res) => {
             platforms,
             textLength: text.length,
             hasImage: !!imageUrl,
-            hasJobId: !!jobId,
             results,
             timestamp: new Date().toISOString(),
           }
@@ -375,103 +318,12 @@ export const manualSocialMediaPromotion = onRequest(async (req, res) => {
         return;
       }
 
-      // Handle legacy automatic posting (existing functionality)
-      const { jobId } = requestBody;
-      if (!jobId) {
-        res.status(400).json({ error: "jobId is required for automatic posting" });
-        return;
-      }
-
-      const db = getFirestore();
-      console.log("[ManualSocialMedia] Received jobId for auto posting:", jobId);
-      
-      const jobSnap = await db.collection("jobs").doc(jobId).get();
-      if (!jobSnap.exists) {
-        console.log("[ManualSocialMedia] Job not found:", jobId);
-        res.status(404).json({ error: "Job not found" });
-        return;
-      }
-
-      const jobData = jobSnap.data() as SocialMediaJob;
-      const job: SocialMediaJob = { ...jobData, id: jobSnap.id };
-      console.log("[ManualSocialMedia] Loaded job for auto posting:", job);
-
-      // Fetch centralized template
-      const templateSnap = await db.collection("config").doc("socialMediaTemplate").get();
-      const templateData = (templateSnap && templateSnap.exists && typeof templateSnap.data === 'function')
-        ? templateSnap.data() ?? {}
-        : {};
-      const template = templateData.template ||
-        "🚀 New job: {{title}} at {{companyName}}!\nCheck it out and apply now!\n{{jobUrl}}";
-      const templateMediaUrl = templateData.mediaUrl || "";
-
-      // Render message
-      const message = renderTemplateFromJob(template, job);
-      console.log("[ManualSocialMedia] Rendered message:", message);
-
-      // Prepare job object for sending (shortDescription for LinkedIn, mediaUrl for both)
-      const jobForSend = { ...job, shortDescription: message, mediaUrl: job.mediaUrl || templateMediaUrl };
-      console.log("[ManualSocialMedia] jobForSend:", jobForSend);
-
-      let linkedInSuccess = false;
-      let telegramSuccess = false;
-      let xSuccess = false;
-      
-      // Try posting to LinkedIn
-      try {
-        linkedInSuccess = await postToLinkedIn(jobForSend);
-        console.log("[ManualSocialMedia] LinkedIn result:", linkedInSuccess);
-      } catch (err: any) {
-        console.error("[ManualSocialMedia] Error posting to LinkedIn:", err.message);
-      }
-      
-      // Try posting to Telegram
-      try {
-        telegramSuccess = await postToTelegram(jobForSend);
-        console.log("[ManualSocialMedia] Telegram result:", telegramSuccess);
-      } catch (err: any) {
-        console.error("[ManualSocialMedia] Error posting to Telegram:", err.message);
-      }
-      
-      // Try posting to X
-      try {
-        xSuccess = await postToX(jobForSend);
-        console.log("[ManualSocialMedia] X result:", xSuccess);
-      } catch (err: any) {
-        console.error("[ManualSocialMedia] Error posting to X:", err.message);
-      }
-      
-      // Consider success if at least one platform works
-      if (linkedInSuccess || telegramSuccess || xSuccess) {
-        console.log("[ManualSocialMedia] At least one platform succeeded, updating job");
-        await db.collection("jobs").doc(jobId).update({
-          socialMediaPromotionCount: (job.socialMediaPromotionCount ?? 0) + 1,
-          socialMediaPromotionLastSent: new Date().toISOString(),
-        });
-        
-        await logSystemActivity(
-          "system",
-          "AutomaticSocialMedia",
-          {
-            jobId: job.id,
-            jobTitle: job.title,
-            companyName: job.companyName,
-            promotedPlatforms: [
-              linkedInSuccess ? "LinkedIn" : null,
-              telegramSuccess ? "Telegram" : null,
-              xSuccess ? "X" : null
-            ].filter(Boolean),
-            timestamp: new Date().toISOString(),
-            promotionCount: (job.socialMediaPromotionCount ?? 0) + 1,
-            planLimit: job.socialMediaPromotion ?? 0,
-            manual: true,
-          }
-        );
-        
-        res.status(200).json({ success: true });
-      } else {
-        res.status(500).json({ error: "Failed to send to all platforms" });
-      }
+      // Legacy job posting removed - system now only supports manual social media posts
+      // If you receive this error, update your client to use type: 'manual' format
+      res.status(400).json({ 
+        error: "Job posting is no longer supported. Use type: 'manual' with text, platforms, and imageUrl instead.",
+        hint: "System now only supports manual social media posts (not job promotion)"
+      });
 
     } catch (err: any) {
       console.error("[ManualSocialMedia] Error:", err);

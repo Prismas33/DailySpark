@@ -18,11 +18,11 @@ if (!admin.apps.length) {
   admin.initializeApp();
 }
 
-// Import functions from syncLearn2EarnStatus
-import { syncLearn2EarnStatusJob, syncLearn2EarnStatusV2 } from "../syncLearn2EarnStatus";
-import { scheduledSocialMediaPromotion } from "./socialMediaPromotionScheduler";
+// Import functions
+// import { syncLearn2EarnStatusJob, syncLearn2EarnStatusV2 } from "../syncLearn2EarnStatus"; // Commented out - file not found
+// import { scheduledSocialMediaPromotion } from "./socialMediaPromotionScheduler"; // REMOVED - No longer using jobs system
 import { manualSocialMediaPromotion } from "./manualSocialMediaPromotion";
-import { scheduledJobsImport } from "./jobsImportScheduler";
+// import { scheduledJobsImport } from "./jobsImportScheduler"; // Commented out - file not found
 import { 
   scheduledSocialMediaQueue9AM, 
   scheduledSocialMediaQueue12PM, 
@@ -31,11 +31,11 @@ import {
 
 // Re-export for external use
 export { 
-  syncLearn2EarnStatusJob, 
-  syncLearn2EarnStatusV2, 
-  scheduledSocialMediaPromotion, 
+  // syncLearn2EarnStatusJob, 
+  // syncLearn2EarnStatusV2, 
+  // scheduledSocialMediaPromotion, // REMOVED - No longer using jobs system
   manualSocialMediaPromotion,
-  scheduledJobsImport,
+  // scheduledJobsImport,
   scheduledSocialMediaQueue9AM,
   scheduledSocialMediaQueue12PM,
   scheduledSocialMediaQueue6PM

@@ -1,204 +1,164 @@
 import { getFirestore } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logSystemActivity } from "./logSystem";
-import { postToLinkedIn, postToTelegram, postToX, renderTemplateFromJob, SocialMediaJob } from "./socialMediaPromotionScheduler";
+import { postToLinkedIn, postToX, SocialMediaJob } from "./socialMediaPromotionScheduler";
 
-interface QueueJob {
+/**
+ * Extract storage path from Firebase Storage URL
+ * Example: https://firebasestorage.googleapis.com/v0/b/bucket/o/path%2Fto%2Ffile.jpg?alt=media
+ * Returns: path/to/file.jpg
+ */
+function extractStoragePathFromUrl(url: string): string | null {
+  try {
+    const match = url.match(/\/o\/(.+?)\?/);
+    if (match && match[1]) {
+      return decodeURIComponent(match[1]);
+    }
+    return null;
+  } catch (error) {
+    console.error('[Storage] Error extracting path from URL:', error);
+    return null;
+  }
+}
+
+interface QueuedPost {
   id: string;
-  jobId: string;
-  jobTitle: string;  // CORRETO: API salva como 'jobTitle', não 'title'
-  companyName: string;
-  status: 'pending' | 'sent' | 'failed';
-  platforms: string[] | { linkedin?: boolean; telegram?: boolean; x?: boolean } | any;
-  addedBy: string;
-  addedAt: string;
-  queuePosition: number;
+  content: string;
+  platforms: string[];
+  mediaUrl?: string;
+  postType?: 'post' | 'reel';
+  mediaType?: 'image' | 'video';
+  scheduledAt: any; // Firestore Timestamp
+  status: 'scheduled' | 'sent' | 'failed';
+  createdAt: any;
 }
 
 /**
- * Função para processar jobs da fila de social media
- * REGRAS: 
- * - Processa APENAS 1 job por execução
- * - Usa o mesmo template dos automáticos
- * - Remove da fila após envio
+ * Process scheduled posts from the queue
+ * Sends posts that are due to be published
  */
 export async function processSocialMediaQueue(): Promise<void> {
   const db = getFirestore();
   
   try {
-    console.log('[SocialQueue] Starting social media queue processing...');
-    console.log('[SocialQueue] 🔍 Debugging: Checking database connection...');
+    console.log('[SocialQueue] Starting queue processing...');
     
-    // DEBUG: Verificar conexão e total de docs
-    const totalDocs = await db.collection('socialMediaQueue').get();
-    console.log(`[SocialQueue] 📊 Total documents in socialMediaQueue: ${totalDocs.size}`);
-    
-    // 1. Buscar APENAS o próximo job da fila (ordenado por queuePosition - FIFO)
+    const now = new Date();
     const queueRef = db.collection('socialMediaQueue');
-    console.log('[SocialQueue] 🔍 Executing query: status == pending, orderBy queuePosition asc, limit 1');
     
-    const pendingJobs = await queueRef
-      .where('status', '==', 'pending')
-      .orderBy('queuePosition', 'asc')  // Primeiro a entrar, primeiro a sair (FIFO)
-      .limit(1)  // APENAS 1 JOB POR VEZ
+    // Find posts scheduled for now or earlier that haven't been sent yet
+    // Firestore Timestamps are compared directly, not as ISO strings
+    const duePostsQuery = await queueRef
+      .where('status', '==', 'scheduled')
+      .where('scheduledAt', '<=', now)
+      .orderBy('scheduledAt', 'asc')
+      .limit(5) // Process up to 5 posts per run
       .get();
     
-    console.log(`[SocialQueue] 📋 Pending jobs found: ${pendingJobs.size}`);
+    console.log(`[SocialQueue] Found ${duePostsQuery.size} posts due for publishing`);
     
-    if (pendingJobs.empty) {
-      console.log('[SocialQueue] ❌ No pending jobs found in queue');
-      
-      // DEBUG: Vamos verificar todos os status existentes
-      const allJobs = await db.collection('socialMediaQueue').get();
-      const statusCount: { [key: string]: number } = {};
-      allJobs.forEach(doc => {
-        const status = doc.data().status || 'undefined';
-        statusCount[status] = (statusCount[status] || 0) + 1;
-      });
-      console.log('[SocialQueue] 📊 Status breakdown:', statusCount);
-      
+    if (duePostsQuery.empty) {
+      console.log('[SocialQueue] No posts to process');
       return;
     }
     
-    const queueDoc = pendingJobs.docs[0];
-    const queueJob = { id: queueDoc.id, ...queueDoc.data() } as QueueJob;
-    
-    console.log(`[SocialQueue] ✅ Processing job: "${queueJob.jobTitle}" (ID: ${queueJob.jobId})`);
-    console.log(`[SocialQueue] 📝 Queue job data:`, {
-      id: queueJob.id,
-      jobId: queueJob.jobId,
-      jobTitle: queueJob.jobTitle,
-      companyName: queueJob.companyName,
-      status: queueJob.status,
-      platforms: queueJob.platforms,
-      queuePosition: queueJob.queuePosition
-    });
-    
-    try {
-      // 2. Buscar dados completos do job
-      const jobRef = db.collection('jobs').doc(queueJob.jobId);
-      const jobDoc = await jobRef.get();
+    for (const postDoc of duePostsQuery.docs) {
+      const post = { id: postDoc.id, ...postDoc.data() } as QueuedPost;
       
-      if (!jobDoc.exists) {
-        console.log(`[SocialQueue] Job ${queueJob.jobId} not found, removing from queue`);
-        await queueDoc.ref.delete();
-        return;
-      }
+      console.log(`[SocialQueue] Processing post: "${post.content.substring(0, 50)}..."`);
       
-      const jobData = jobDoc.data();
-      
-      // 3. Buscar template centralizado (MESMO dos automáticos)
-      const templateSnap = await db.collection("config").doc("socialMediaTemplate").get();
-      const templateData = (templateSnap && templateSnap.exists && typeof templateSnap.data === 'function')
-        ? templateSnap.data() ?? {}
-        : {};
-      const template = templateData.template ||
-        "🚀 New job: {{title}} at {{companyName}}!\nCheck it out and apply now!\n{{jobUrl}}";
-      const templateMediaUrl = templateData.mediaUrl || "";
-      
-      // 4. Formatar job usando o MESMO template dos automáticos
-      const job: SocialMediaJob = {
-        id: queueJob.jobId,
-        title: jobData?.title || '',
-        companyName: jobData?.companyName || '',
-        mediaUrl: jobData?.mediaUrl || templateMediaUrl
-      };
-      
-      const message = renderTemplateFromJob(template, job);
-      const jobForSend = { ...job, shortDescription: message };
-      
-      // 5. Enviar para redes sociais (usando as mesmas funções dos automáticos)
-      console.log(`[SocialQueue] Sending "${job.title}" to social media platforms...`);
-      
-      const results = {
-        linkedin: false,
-        telegram: false,
-        x: false
-      };
-      
-      // Enviar apenas para as plataformas selecionadas
-      // Converter objeto platforms para array (compatibilidade com API)
-      let platforms: string[] = ['linkedin', 'telegram', 'x']; // padrão
-      
-      if (queueJob.platforms) {
-        if (Array.isArray(queueJob.platforms)) {
-          // Se já é array, usar diretamente
-          platforms = queueJob.platforms;
-        } else if (typeof queueJob.platforms === 'object') {
-          // Se é objeto (formato da API), converter para array
-          platforms = [];
-          if (queueJob.platforms.linkedin) platforms.push('linkedin');
-          if (queueJob.platforms.telegram) platforms.push('telegram');
-          if (queueJob.platforms.x) platforms.push('x');
+      try {
+        const results = {
+          linkedin: false,
+          x: false
+        };
+        
+        // Create job object for posting functions (they expect this format)
+        const jobForSend: SocialMediaJob = {
+          id: post.id,
+          title: '',
+          companyName: '',
+          shortDescription: post.content,
+          mediaUrl: post.mediaUrl || ''
+        };
+        
+        // Post to selected platforms
+        console.log(`[SocialQueue] Posting to: ${post.platforms.join(', ')}`);
+        console.log(`[SocialQueue] Media URL: ${post.mediaUrl || 'none'}`);
+        console.log(`[SocialQueue] Post Type: ${post.postType || 'post'}, Media Type: ${post.mediaType || 'none'}`);
+        
+        if (post.platforms.includes('linkedin')) {
+          results.linkedin = await postToLinkedIn(jobForSend);
         }
-      }
-      
-      console.log(`[SocialQueue] Selected platforms: ${platforms.join(', ')}`);
-      
-      if (platforms.includes('linkedin')) {
-        results.linkedin = await postToLinkedIn(jobForSend);
-      }
-      if (platforms.includes('telegram')) {
-        results.telegram = await postToTelegram(jobForSend);
-      }
-      if (platforms.includes('x')) {
-        results.x = await postToX(jobForSend);
-      }
-      
-      // 6. Marcar como processado e REMOVER da fila
-      await queueDoc.ref.update({
-        status: 'sent',
-        sentAt: new Date().toISOString(),
-        results: results
-      });
-      
-      // 7. Log da atividade
-      await logSystemActivity(
-        "system",
-        "SocialMediaQueueScheduler",
-        {
-          jobId: queueJob.jobId,
-          jobTitle: job.title,
-          companyName: job.companyName,
-          platforms: platforms,
-          results: results,
-          queuePosition: 1,
-          timestamp: new Date().toISOString(),
-          status: "success"
+        if (post.platforms.includes('x')) {
+          results.x = await postToX(jobForSend);
         }
-      );
-      
-      console.log(`[SocialQueue] ✅ Successfully sent "${job.title}" to social media`);
-      console.log(`[SocialQueue] Results: LinkedIn=${results.linkedin}, Telegram=${results.telegram}, X=${results.x}`);
-      
-    } catch (jobError: any) {
-      console.error(`[SocialQueue] ❌ Error processing job ${queueJob.jobId}:`, jobError.message);
-      
-      // Marcar como falha
-      await queueDoc.ref.update({
-        status: 'failed',
-        failedAt: new Date().toISOString(),
-        error: jobError.message
-      });
-      
-      // Log do erro específico do job
-      await logSystemActivity(
-        "system",
-        "SocialMediaQueueScheduler",
-        {
-          jobId: queueJob.jobId,
-          jobTitle: queueJob.jobTitle,
-          error: jobError.message,
-          timestamp: new Date().toISOString(),
-          status: "job_failed"
+        
+        // Clean up media from Firebase Storage after successful post
+        if (post.mediaUrl && post.mediaUrl.includes('firebasestorage.googleapis.com')) {
+          try {
+            const storage = getStorage();
+            const mediaPath = extractStoragePathFromUrl(post.mediaUrl);
+            
+            if (mediaPath) {
+              await storage.bucket().file(mediaPath).delete();
+              console.log(`[SocialQueue] ✅ Cleaned up media from Storage: ${mediaPath}`);
+            } else {
+              console.warn(`[SocialQueue] ⚠️ Could not extract storage path from URL: ${post.mediaUrl}`);
+            }
+          } catch (cleanupError: any) {
+            // Don't fail the whole process if cleanup fails
+            console.warn(`[SocialQueue] ⚠️ Failed to clean up media:`, cleanupError.message);
+          }
         }
-      );
+        
+        // Log success
+        await logSystemActivity(
+          "system",
+          "SocialMediaQueueScheduler",
+          {
+            postId: post.id,
+            content: post.content.substring(0, 100),
+            platforms: post.platforms,
+            results: results,
+            timestamp: new Date().toISOString(),
+            status: "success"
+          }
+        );
+        
+        // Delete post from queue immediately after successful send
+        await postDoc.ref.delete();
+        
+        console.log(`[SocialQueue] ✅ Post sent successfully and removed from queue`);
+        console.log(`[SocialQueue] Results: LinkedIn=${results.linkedin}, X=${results.x}`);
+        
+      } catch (postError: any) {
+        console.error(`[SocialQueue] ❌ Error sending post ${post.id}:`, postError.message);
+        
+        // Log error before deleting
+        await logSystemActivity(
+          "system",
+          "SocialMediaQueueScheduler",
+          {
+            postId: post.id,
+            content: post.content.substring(0, 100),
+            error: postError.message,
+            timestamp: new Date().toISOString(),
+            status: "post_failed"
+          }
+        );
+        
+        // Delete failed post from queue immediately (keeps queue clean)
+        await postDoc.ref.delete();
+        
+        console.log(`[SocialQueue] ❌ Failed post removed from queue: ${postError.message}`);
+      }
     }
     
   } catch (error: any) {
-    console.error('[SocialQueue] ❌ Critical error in queue processing:', error.message);
+    console.error('[SocialQueue] ❌ Critical error:', error.message);
     
-    // Log do erro crítico
     await logSystemActivity(
       "system",
       "SocialMediaQueueScheduler",
@@ -209,11 +169,13 @@ export async function processSocialMediaQueue(): Promise<void> {
       }
     );
   }
+  
+  // Note: No cleanup needed - posts are deleted immediately after processing (success or failure)
 }
 
 /**
  * Função agendada para executar às 09:00 UTC
- * Processa 1 job da fila manual
+ * Processa posts da fila de agendamento
  */
 export const scheduledSocialMediaQueue9AM = onSchedule(
   {
@@ -231,7 +193,7 @@ export const scheduledSocialMediaQueue9AM = onSchedule(
 
 /**
  * Função agendada para executar às 12:00 UTC  
- * Processa 1 job da fila manual
+ * Processa posts da fila de agendamento
  */
 export const scheduledSocialMediaQueue12PM = onSchedule(
   {
@@ -249,7 +211,7 @@ export const scheduledSocialMediaQueue12PM = onSchedule(
 
 /**
  * Função agendada para executar às 18:00 UTC
- * Processa 1 job da fila manual  
+ * Processa posts da fila de agendamento
  */
 export const scheduledSocialMediaQueue6PM = onSchedule(
   {

@@ -1,10 +1,10 @@
 import { getFirestore } from "firebase-admin/firestore";
-import { onSchedule } from "firebase-functions/v2/scheduler";
+// import { onSchedule } from "firebase-functions/v2/scheduler"; // Disabled - no longer using job scheduler
 import axios from 'axios';
 import { TwitterApi } from 'twitter-api-v2';
 import { logSystemActivity } from "./logSystem";
 
-// Telegram and LinkedIn configuration - Using Firebase Functions config
+// Social Media configuration - Using Firebase Functions config
 // Moved config loading inside functions to avoid initialization timeouts
 
 /**
@@ -104,27 +104,32 @@ export async function getLinkedInOrganizationId(token: string): Promise<string |
 }
 
 /**
- * Uploads an image to LinkedIn and returns the media URN
- * @param imageUrl URL of the image to upload
+ * Uploads media (image or video) to LinkedIn and returns the media URN
+ * @param mediaUrl URL of the media to upload
  * @param token LinkedIn access token
- * @param organizationId Organization ID for the upload
+ * @param authorId Person ID or Organization ID for the upload
+ * @param isVideo Whether the media is a video (default: false)
  * @returns Media URN or null if upload fails
  */
-export async function uploadImageToLinkedIn(imageUrl: string, token: string, organizationId?: string): Promise<string | null> {
+export async function uploadMediaToLinkedIn(mediaUrl: string, token: string, authorId?: string, isVideo: boolean = false): Promise<string | null> {
   try {
-    console.log('[SocialMedia] Starting LinkedIn image upload process...');
+    console.log(`[SocialMedia] Starting LinkedIn ${isVideo ? 'video' : 'image'} upload process...`);
     
-    // Step 1: Register upload - use organization ID (required)
-    if (!organizationId) {
-      console.error('[SocialMedia] Organization ID is required for image upload');
+    // Step 1: Register upload - use person or organization ID
+    if (!authorId) {
+      console.error('[SocialMedia] Author ID (person or organization) is required for media upload');
       return null;
     }
     
-    const author = `urn:li:organization:${organizationId}`;
+    // Determine if it's a person or organization URN
+    const author = authorId.includes(':') ? authorId : `urn:li:person:${authorId}`;
+    
+    // Choose the appropriate recipe based on media type
+    const recipe = isVideo ? 'urn:li:digitalmediaRecipe:feedshare-video' : 'urn:li:digitalmediaRecipe:feedshare-image';
     
     const registerUploadBody = {
       registerUploadRequest: {
-        recipes: ['urn:li:digitalmediaRecipe:feedshare-image'],
+        recipes: [recipe],
         owner: author,
         serviceRelationships: [
           {
@@ -153,23 +158,28 @@ export async function uploadImageToLinkedIn(imageUrl: string, token: string, org
       return null;
     }
 
-    // Step 2: Download the image
-    const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer' });
-    const imageBuffer = Buffer.from(imageResponse.data);
+    // Step 2: Download the media
+    const mediaResponse = await axios.get(mediaUrl, { responseType: 'arraybuffer' });
+    const mediaBuffer = Buffer.from(mediaResponse.data);
 
-    // Step 3: Upload the image binary
-    await axios.post(uploadUrl, imageBuffer, {
+    // Step 3: Upload the media binary
+    await axios.post(uploadUrl, mediaBuffer, {
       headers: {
         'Content-Type': 'application/octet-stream'
       }
     });
 
-    console.log('[SocialMedia] Image uploaded successfully to LinkedIn');
+    console.log(`[SocialMedia] ${isVideo ? 'Video' : 'Image'} uploaded successfully to LinkedIn`);
     return asset;
   } catch (error: any) {
-    console.error('[SocialMedia] Error uploading image to LinkedIn:', error.response?.data || error.message);
+    console.error(`[SocialMedia] Error uploading ${isVideo ? 'video' : 'image'} to LinkedIn:`, error.response?.data || error.message);
     return null;
   }
+}
+
+// Keep backward compatibility alias
+export async function uploadImageToLinkedIn(imageUrl: string, token: string, authorId?: string): Promise<string | null> {
+  return uploadMediaToLinkedIn(imageUrl, token, authorId, false);
 }
 
 /**
@@ -180,9 +190,11 @@ async function postToLinkedIn(job: SocialMediaJob): Promise<boolean> {
   try {
     // Get LinkedIn credentials from environment variables
     const LINKEDIN_ACCESS_TOKEN = process.env.LINKEDIN_ACCESS_TOKEN;
-    const LINKEDIN_ORGANIZATION_ID = process.env.LINKEDIN_ORGANIZATION_ID;
+    const LINKEDIN_PERSON_ID = process.env.LINKEDIN_PERSON_ID;
     
-    if (!LINKEDIN_ACCESS_TOKEN || !LINKEDIN_ORGANIZATION_ID) {
+    console.log('[LinkedIn] 🔍 DEBUG - Using Person ID:', LINKEDIN_PERSON_ID);
+    
+    if (!LINKEDIN_ACCESS_TOKEN || !LINKEDIN_PERSON_ID) {
       console.error('[SocialMedia] LinkedIn credentials not configured');
       return false;
     }
@@ -197,7 +209,7 @@ async function postToLinkedIn(job: SocialMediaJob): Promise<boolean> {
     if (!tokenValid) {
       console.error(
         '[SocialMedia] LinkedIn token validation failed - required scopes: ' +
-        'r_basicprofile, w_organization_social, r_organization_admin'
+        'r_basicprofile, w_member_social'
       );
       return false;
     }
@@ -209,45 +221,79 @@ async function postToLinkedIn(job: SocialMediaJob): Promise<boolean> {
       (job.salary ? `\nSalary: ${job.salary}` : '') +
       `\n\nSee details: https://gate33.net/jobs/${job.id}`;
     
-    // Use organization ID from environment (Gate33)
-    const organizationId = LINKEDIN_ORGANIZATION_ID;
+    // Use person ID from environment (Personal Profile)
+    const personId = LINKEDIN_PERSON_ID;
     let payload: any;
-    let mediaUrn: string | null = null;
     
-    // Try to upload image if mediaUrl is provided
+    // Check if there's media to upload
+    let mediaUrn: string | null = null;
+    let mediaCategory: 'IMAGE' | 'VIDEO' | 'NONE' = 'NONE';
+    
     if (job.mediaUrl) {
-      console.log('[SocialMedia] Attempting to upload image to LinkedIn...');
-      mediaUrn = await uploadImageToLinkedIn(job.mediaUrl, LINKEDIN_ACCESS_TOKEN!, organizationId);
+      console.log('[LinkedIn] Media URL detected, attempting upload:', job.mediaUrl);
+      
+      // Detect if it's a video based on URL extension or content type
+      const isVideo = /\.(mp4|mov|avi|wmv|flv|webm)$/i.test(job.mediaUrl);
+      
+      // LinkedIn personal profiles support image and video upload
+      mediaUrn = await uploadMediaToLinkedIn(job.mediaUrl, LINKEDIN_ACCESS_TOKEN, personId, isVideo);
       if (mediaUrn) {
-        console.log('[SocialMedia] Image uploaded successfully, URN:', mediaUrn);
+        mediaCategory = isVideo ? 'VIDEO' : 'IMAGE';
+        console.log(`[LinkedIn] ${mediaCategory} uploaded successfully, URN:`, mediaUrn);
       } else {
-        console.log('[SocialMedia] Image upload failed, posting text-only');
+        console.warn('[LinkedIn] Media upload failed, posting text-only');
       }
     }
     
-    // Build the payload for LinkedIn (organization page only)
-    payload = {
-      author: `urn:li:organization:${organizationId}`,
-      lifecycleState: 'PUBLISHED',
-      specificContent: {
-        'com.linkedin.ugc.ShareContent': {
-          shareCommentary: {
-            text: postText
-          },
-          shareMediaCategory: mediaUrn ? 'IMAGE' : 'NONE',
-          ...(mediaUrn ? {
-            media: [{
-              status: 'READY',
-              media: mediaUrn
-            }]
-          } : {})
+    // Build the payload for LinkedIn (personal profile)
+    if (mediaUrn && mediaCategory !== 'NONE') {
+      // Post with image or video
+      payload = {
+        author: `urn:li:person:${personId}`,
+        lifecycleState: 'PUBLISHED',
+        specificContent: {
+          'com.linkedin.ugc.ShareContent': {
+            shareCommentary: {
+              text: postText
+            },
+            shareMediaCategory: mediaCategory,
+            media: [
+              {
+                status: 'READY',
+                description: {
+                  text: mediaCategory === 'VIDEO' ? 'Post video' : 'Post image'
+                },
+                media: mediaUrn,
+                title: {
+                  text: job.title || 'Post'
+                }
+              }
+            ]
+          }
+        },
+        visibility: {
+          'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC'
         }
-      },
-      visibility: {
-        'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC'
-      }
-    };
-    console.log(`[SocialMedia] Using organization ${organizationId} for posting`);
+      };
+    } else {
+      // Text-only post
+      payload = {
+        author: `urn:li:person:${personId}`,
+        lifecycleState: 'PUBLISHED',
+        specificContent: {
+          'com.linkedin.ugc.ShareContent': {
+            shareCommentary: {
+              text: postText
+            },
+            shareMediaCategory: 'NONE'
+          }
+        },
+        visibility: {
+          'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC'
+        }
+      };
+    }
+    console.log(`[SocialMedia] Posting to personal profile (${personId})`);
     // Log token status (not the actual token)
     console.log(`[SocialMedia] LinkedIn token exists: ${!!LINKEDIN_ACCESS_TOKEN}`);
     console.log(`[SocialMedia] LinkedIn token length: ${LINKEDIN_ACCESS_TOKEN ? LINKEDIN_ACCESS_TOKEN.length : 0}`);
@@ -275,85 +321,6 @@ async function postToLinkedIn(job: SocialMediaJob): Promise<boolean> {
       console.error(`[SocialMedia] Error posting to LinkedIn:`, error.response.data);
     } else {
       console.error(`[SocialMedia] Error posting to LinkedIn:`, error);
-    }
-    return false;
-  }
-}
-
-/**
- * Sends a message to the Telegram channel
- * @param job The job to be posted
- * @returns boolean indicating success or failure
- */
-async function postToTelegram(job: SocialMediaJob): Promise<boolean> {
-  try {
-    console.log('🟢 [TELEGRAM] Function postToTelegram called with job:', job.id);
-    console.log('🟢 [TELEGRAM] Job title:', job.title);
-    
-    // Get Telegram credentials from environment variables (Firebase Functions v2 compatible)
-    const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-    const TELEGRAM_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
-    
-    if (!job.title || !job.companyName) {
-      console.error(`[SocialMedia] Cannot post job ${job.id} to Telegram: Missing title or companyName`);
-      return false;
-    }
-
-    // Use the template message directly - SAME AS LINKEDIN AND X
-    const message = job.shortDescription;
-    const hasMedia = !!job.mediaUrl;
-    // Log token and channel ID status (not the actual token)
-    console.log(`[SocialMedia] Telegram bot token exists: ${!!TELEGRAM_BOT_TOKEN}`);
-    console.log(`[SocialMedia] Telegram bot token length: ${TELEGRAM_BOT_TOKEN ? TELEGRAM_BOT_TOKEN.length : 0}`);
-    console.log(`[SocialMedia] Telegram channel ID: ${TELEGRAM_CHANNEL_ID}`);
-    
-    // Try to verify bot is working first
-    try {
-      const botCheck = await axios.get(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe`);
-      console.log(`[SocialMedia] Telegram bot check:`, botCheck.data);
-    } catch (e: any) {
-      console.error(`[SocialMedia] Telegram bot check failed:`, e.response?.data || e.message);
-    }
-    
-    // Telegram API endpoint to send messages
-    const url = hasMedia
-      ? `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto`
-      : `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-    
-    // Request parameters
-    const data = hasMedia
-      ? {
-          chat_id: TELEGRAM_CHANNEL_ID,
-          photo: job.mediaUrl,
-          caption: message,
-          parse_mode: 'HTML',
-          disable_web_page_preview: false
-        }
-      : {
-          chat_id: TELEGRAM_CHANNEL_ID,
-          text: message,
-          parse_mode: 'HTML',
-          disable_web_page_preview: false
-        };
-    
-    // Make the POST request to Telegram API
-    const response = await axios.post(url, data);
-    
-    if (response.status === 200 && response.data.ok) {
-      console.log('🟢 [TELEGRAM] SUCCESS! Job posted to Telegram:', job.title);
-      console.log('🟢 [TELEGRAM] Response:', response.data);
-      return true;
-    } else {
-      console.error('🔴 [TELEGRAM] FAILED! Response not OK:', response.data);
-      return false;
-    }
-  } catch (error) {
-    console.error('🔴 [TELEGRAM] EXCEPTION in postToTelegram:', error);
-    const err = error as any;
-    if (err && err.response && err.response.data) {
-      console.error('🔴 [TELEGRAM] Error details:', err.response.data);
-    } else {
-      console.error('🔴 [TELEGRAM] General error:', error);
     }
     return false;
   }
@@ -451,18 +418,26 @@ async function postToX(job: SocialMediaJob): Promise<boolean> {
         console.log('[SocialMedia] Attempting to upload media to X...');
         console.log('[SocialMedia] Media URL:', job.mediaUrl);
         
-        // Download the image first
-        const imageResponse = await axios.get(job.mediaUrl, { responseType: 'arraybuffer' });
-        const imageBuffer = Buffer.from(imageResponse.data);
-        console.log('[SocialMedia] Image downloaded, size:', imageBuffer.length, 'bytes');
+        // Download the media first
+        const mediaResponse = await axios.get(job.mediaUrl, { responseType: 'arraybuffer' });
+        const mediaBuffer = Buffer.from(mediaResponse.data);
+        const contentType = mediaResponse.headers['content-type'] || 'image/jpeg';
+        console.log('[SocialMedia] Media downloaded, size:', mediaBuffer.length, 'bytes, type:', contentType);
+        
+        // Determine if it's a video or image
+        const isVideo = contentType.startsWith('video/');
         
         // Upload media to Twitter using v1.1 (media upload is still v1.1 even with v2 posting)
-        const mediaUpload = await twitterClient.v1.uploadMedia(imageBuffer, { 
-          mimeType: imageResponse.headers['content-type'] || 'image/jpeg' 
+        // For videos, Twitter supports: video/mp4, video/quicktime, up to 512MB
+        const mediaUpload = await twitterClient.v1.uploadMedia(mediaBuffer, { 
+          mimeType: contentType,
+          target: isVideo ? 'tweet' : undefined,
+          additionalOwners: undefined,
+          type: isVideo ? 'video/mp4' : undefined
         });
         
         tweetData.media = { media_ids: [mediaUpload] };
-        console.log('[SocialMedia] Media uploaded to X successfully, ID:', mediaUpload);
+        console.log(`[SocialMedia] ${isVideo ? 'Video' : 'Image'} uploaded to X successfully, ID:`, mediaUpload);
       } catch (mediaError: any) {
         console.error('[SocialMedia] Failed to upload media to X:', mediaError.message);
         console.error('[SocialMedia] Media error details:', mediaError.response?.data || mediaError);
@@ -539,7 +514,7 @@ function formatXMessage(job: SocialMediaJob): string {
 }
 
 // Export utility functions for external use
-export { postToLinkedIn, postToTelegram, postToX };
+export { postToLinkedIn, postToX };
 
 // Function to render a custom template
 export function renderTemplateFromJob(template: string, job: SocialMediaJob): string {
@@ -623,11 +598,10 @@ export async function runSocialMediaPromotionScheduler() {
       const jobForSend = { ...job, shortDescription: message, mediaUrl: job.mediaUrl || templateMediaUrl };
       // Post to social media
       const linkedInSuccess = await postToLinkedIn(jobForSend);
-      const telegramSuccess = await postToTelegram(jobForSend);
       const xSuccess = await postToX(jobForSend);
 
       // Atualiza o contador se pelo menos um envio for bem-sucedido
-      if (linkedInSuccess || telegramSuccess || xSuccess) {
+      if (linkedInSuccess || xSuccess) {
         await jobsRef.doc(job.id).update({
           socialMediaPromotionCount: (job.socialMediaPromotionCount ?? 0) + 1,
           socialMediaPromotionLastSent: new Date().toISOString(),
@@ -647,7 +621,6 @@ export async function runSocialMediaPromotionScheduler() {
             companyName: job.companyName,
             promotedPlatforms: [
               linkedInSuccess ? "LinkedIn" : null,
-              telegramSuccess ? "Telegram" : null,
               xSuccess ? "X" : null
             ].filter(Boolean),
             timestamp: new Date().toISOString(),
@@ -661,6 +634,9 @@ export async function runSocialMediaPromotionScheduler() {
   console.log('[SocialMedia] Scheduler run complete.');
 }
 
+// ⚠️ DISABLED: Job promotion scheduler (system no longer uses jobs, only social media posts)
+// If you need to re-enable job promotion in the future, uncomment below:
+/*
 export const scheduledSocialMediaPromotion = onSchedule(
   {
     schedule: "every 8 hours",
@@ -670,6 +646,7 @@ export const scheduledSocialMediaPromotion = onSchedule(
     await runSocialMediaPromotionScheduler();
   }
 );
+*/
 
 // If run directly, execute:
 if (require.main === module) {

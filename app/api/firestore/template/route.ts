@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/firebase';
+import { adminDb } from '@/lib/firebaseServer';
 
 export async function GET() {
   try {
     // Get template configuration
-    const templateDoc = await db.collection('config').doc('socialMediaTemplate').get();
+    if (!adminDb) throw new Error('Firebase Admin not initialized');
+    const templateDoc = await adminDb.collection('config').doc('socialMediaTemplate').get();
     
     if (templateDoc.exists) {
       const data = templateDoc.data();
@@ -34,7 +35,8 @@ export async function POST(req: NextRequest) {
     const { template, mediaUrl } = await req.json();
     
     // Save template configuration
-    await db.collection('config').doc('socialMediaTemplate').set({
+    if (!adminDb) throw new Error('Firebase Admin not initialized');
+    await adminDb.collection('config').doc('socialMediaTemplate').set({
       template: template || '',
       mediaUrl: mediaUrl || '',
       updatedAt: new Date().toISOString()

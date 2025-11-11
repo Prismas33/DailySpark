@@ -1,14 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getFirestore } from 'firebase-admin/firestore';
-import { initAdmin } from '../../../../lib/firebaseAdmin';
-
-// Initialize Firebase Admin
-initAdmin();
-
-const db = getFirestore();
+// @ts-ignore
+import { getAdminFirestore } from '../../../../../lib/firebaseAdmin';
 
 export async function GET() {
   try {
+    const db = getAdminFirestore();
+    
     // Buscar o próximo job da fila (mais antigo primeiro - FIFO)
     const queueSnapshot = await db
       .collection('socialMediaQueue')
@@ -48,6 +45,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    const db = getAdminFirestore();
     const { queueId, status } = await request.json();
 
     if (!queueId || !status) {

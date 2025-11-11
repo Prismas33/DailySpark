@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/firebase';
+import { adminDb } from '@/lib/firebaseServer';
 
 export async function GET() {
   try {
     // Get saved templates
-    const templatesSnapshot = await db.collection('savedTemplates').get();
+    if (!adminDb) throw new Error('Firebase Admin not initialized');
+    const templatesSnapshot = await adminDb.collection('savedTemplates').get();
     
     const templates = templatesSnapshot.docs.map(doc => ({
       id: doc.id,
@@ -30,7 +31,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Save new template
-    const templateRef = await db.collection('savedTemplates').add({
+    if (!adminDb) throw new Error('Firebase Admin not initialized');
+    const templateRef = await adminDb.collection('savedTemplates').add({
       name,
       text,
       createdAt: new Date().toISOString()
@@ -56,7 +58,8 @@ export async function DELETE(req: NextRequest) {
     }
 
     // Delete template
-    await db.collection('savedTemplates').doc(id).delete();
+  if (!adminDb) throw new Error('Firebase Admin not initialized');
+  await adminDb.collection('savedTemplates').doc(id).delete();
 
     return NextResponse.json({ success: true });
   } catch (error: any) {

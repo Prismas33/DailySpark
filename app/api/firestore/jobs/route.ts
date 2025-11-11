@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/firebase';
+import { adminDb } from '@/lib/firebaseServer';
 
 export async function GET() {
   try {
     // Get jobs with pending social media promotion
-    const jobsSnapshot = await db.collection('jobs').get();
+    if (!adminDb) throw new Error('Firebase Admin not initialized');
+    const jobsSnapshot = await adminDb.collection('jobs').get();
     
     const jobs = jobsSnapshot.docs
       .map(doc => ({ id: doc.id, ...doc.data() }))
@@ -32,13 +33,14 @@ export async function POST(req: NextRequest) {
     }
 
     // Get specific job
-    const jobDoc = await db.collection('jobs').doc(jobId).get();
+  if (!adminDb) throw new Error('Firebase Admin not initialized');
+  const jobDoc = await adminDb.collection('jobs').doc(jobId).get();
     
     if (!jobDoc.exists) {
       return NextResponse.json({ error: 'Job not found' }, { status: 404 });
     }
 
-    const jobData = { id: jobDoc.id, ...jobDoc.data() };
+  const jobData = { id: jobDoc.id, ...jobDoc.data() };
     return NextResponse.json({ success: true, job: jobData });
   } catch (error: any) {
     console.error('Error fetching job:', error);

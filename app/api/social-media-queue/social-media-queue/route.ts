@@ -1,15 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getFirestore } from 'firebase-admin/firestore';
-import { initAdmin } from '../../../lib/firebaseAdmin';
-
-// Initialize Firebase Admin
-initAdmin();
-
-const db = getFirestore();
+// @ts-ignore
+import { getAdminFirestore } from '../../../../lib/firebaseAdmin';
 
 export async function POST(request: NextRequest) {
   try {
-    const { jobId, addedBy } = await request.json();
+    const db = getAdminFirestore();
+    const { jobId } = await request.json();
 
     if (!jobId) {
       return NextResponse.json(
@@ -29,22 +25,29 @@ export async function POST(request: NextRequest) {
 
     const jobData = jobDoc.data();
 
-    // Adicionar à fila
-    const now = new Date();
+    // Verificar próxima posição na fila
+    const queueSnapshot = await db
+      .collection('socialMediaQueue')
+      .orderBy('queuePosition', 'desc')
+      .limit(1)
+      .get();
 
+    let nextPosition = 1;
+    if (!queueSnapshot.empty) {
+      const lastJob = queueSnapshot.docs[0].data();
+      nextPosition = (lastJob.queuePosition || 0) + 1;
+    }
+
+    // Adicionar job à fila
     const queueData = {
       jobId,
-      jobTitle: jobData?.title || 'Unknown Job',
-      companyName: jobData?.companyName || 'Unknown Company',
-      addedBy: addedBy || 'admin',
-      addedAt: now.toISOString(),
+      title: jobData?.title || '',
+      companyName: jobData?.companyName || '',
+      location: jobData?.location || '',
       status: 'pending',
-      queuePosition: Date.now(), // FIFO - usado para ordenação, primeiro a entrar = menor timestamp
-      platforms: {
-        linkedin: true,
-        telegram: true,
-        x: true
-      }
+      queuePosition: nextPosition,
+      addedAt: new Date().toISOString(),
+      platforms: ['linkedin', 'facebook', 'twitter'] // Platforms padrão
     };
 
     const docRef = await db.collection('socialMediaQueue').add(queueData);
@@ -52,13 +55,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       queueId: docRef.id,
-      message: 'Job added to social media queue successfully'
+      queuePosition: nextPosition,
+      message: 'Job added to social media queue'
     });
 
   } catch (error: any) {
     console.error('Error adding job to queue:', error);
     return NextResponse.json(
-      { error: 'Internal server error: ' + (error instanceof Error ? error.message : 'Unknown error') },
+      { error: 'Internal server error: ' + error.message },
       { status: 500 }
     );
   }
@@ -66,15 +70,15 @@ export async function POST(request: NextRequest) {
 
 export async function GET() {
   try {
-    // Buscar jobs na fila (ordenados por posição na fila - FIFO)
+    const db = getAdminFirestore();
+    
+    // Buscar todos os jobs na fila
     const queueSnapshot = await db
       .collection('socialMediaQueue')
-      .where('status', '==', 'pending')
       .orderBy('queuePosition', 'asc')
-      .limit(10)
       .get();
 
-    const queueJobs = queueSnapshot.docs.map(doc => ({
+    const queueJobs = queueSnapshot.docs.map((doc: any) => ({
       id: doc.id,
       ...doc.data()
     }));
@@ -82,13 +86,13 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       queueJobs,
-      count: queueJobs.length
+      totalJobs: queueJobs.length
     });
 
   } catch (error: any) {
-    console.error('Error fetching queue:', error);
+    console.error('Error fetching social media queue:', error);
     return NextResponse.json(
-      { error: 'Internal server error: ' + (error instanceof Error ? error.message : 'Unknown error') },
+      { error: 'Internal server error: ' + error.message },
       { status: 500 }
     );
   }
@@ -96,8 +100,8 @@ export async function GET() {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const queueId = searchParams.get('id');
+    const db = getAdminFirestore();
+    const { queueId } = await request.json();
 
     if (!queueId) {
       return NextResponse.json(
@@ -106,17 +110,18 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
+    // Remover job da fila
     await db.collection('socialMediaQueue').doc(queueId).delete();
 
     return NextResponse.json({
       success: true,
-      message: 'Job removed from queue successfully'
+      message: 'Job removed from queue'
     });
 
   } catch (error: any) {
     console.error('Error removing job from queue:', error);
     return NextResponse.json(
-      { error: 'Internal server error: ' + (error instanceof Error ? error.message : 'Unknown error') },
+      { error: 'Internal server error: ' + error.message },
       { status: 500 }
     );
   }
