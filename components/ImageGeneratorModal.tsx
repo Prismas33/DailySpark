@@ -48,13 +48,15 @@ export default function ImageGeneratorModal({
       const data = await response.json();
       
       if (!response.ok) {
-        if (response.status === 429 || data.rateLimit) {
-          throw new Error(data.error || 'Rate limit reached. Check your OpenAI billing.');
+        // Show specific OpenAI error message
+        let errorMsg = data.error || 'Failed to generate image';
+        
+        // Add extra details if available
+        if (data.errorDetails) {
+          errorMsg += `\n\nDetalhes: ${data.errorDetails}`;
         }
-        if (data.contentPolicy) {
-          throw new Error(data.error || 'Content policy violation. Try rephrasing your prompt.');
-        }
-        throw new Error(data.error || 'Failed to generate image');
+        
+        throw new Error(errorMsg);
       }
       
       if (data.success && data.imageUrl) {
@@ -140,7 +142,7 @@ export default function ImageGeneratorModal({
               <span>⚠️</span>
               <div className="flex-1">
                 <p className="font-medium mb-1">Generation Failed</p>
-                <p>{error}</p>
+                <p className="whitespace-pre-line">{error}</p>
               </div>
             </div>
           )}

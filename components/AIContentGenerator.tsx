@@ -22,6 +22,7 @@ export default function AIContentGenerator({
   const [error, setError] = useState<string | null>(null);
   const [showComparison, setShowComparison] = useState(false);
   const [currentPrompt, setCurrentPrompt] = useState<string>(initialPrompt);
+  const [aiModel, setAiModel] = useState<'gpt-4o-mini' | 'gpt-4o'>('gpt-4o-mini');
 
   // Always load the freshest prompt from cache when modal opens
   useEffect(() => {
@@ -56,6 +57,7 @@ export default function AIContentGenerator({
         content: originalContent,
         userPrompt: currentPrompt,
         action: suggestion ? 'regenerate' : 'improve',
+        model: aiModel, // Pass selected model to API
       };
 
       console.log('🚀 Sending to AI API:', {
@@ -79,11 +81,15 @@ export default function AIContentGenerator({
       const data = await response.json();
       
       if (!response.ok) {
-        // Handle rate limit errors with specific message
-        if (response.status === 429 || data.rateLimit) {
-          throw new Error(data.error || 'Rate limit reached. Please wait and try again.');
+        // Show specific OpenAI error message
+        let errorMsg = data.error || 'Failed to generate content';
+        
+        // Add extra details if available
+        if (data.errorDetails) {
+          errorMsg += `\n\nDetalhes: ${data.errorDetails}`;
         }
-        throw new Error(data.error || 'Failed to generate content');
+        
+        throw new Error(errorMsg);
       }
       
       if (data.success && data.generatedContent) {
@@ -175,28 +181,69 @@ export default function AIContentGenerator({
             </button>
           </div>
           
-          {/* Prompt indicator */}
-          {currentPrompt ? (
+          {/* AI Model Selector */}
+          <div className="flex items-center justify-between gap-4 mt-3 pt-3 border-t border-gray-700/50">
             <div className="flex items-center gap-2 text-xs">
-              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                <Sparkles className="w-3 h-3" />
-                Using your custom AI prompt from Settings
-              </span>
+              {currentPrompt ? (
+                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  <Sparkles className="w-3 h-3" />
+                  Using your custom AI prompt
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-gray-700 text-gray-400">
+                  Using default prompt
+                </span>
+              )}
             </div>
-          ) : (
-            <div className="flex items-center gap-2 text-xs">
-              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-gray-700 text-gray-400">
-                Using default prompt
-              </span>
-              <a 
-                href="/dashboard?tab=settings" 
-                className="text-emerald-400 hover:text-emerald-300 underline"
-                onClick={onClose}
-              >
-                Configure custom prompt
-              </a>
+            
+            {/* Model Switch */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-400">Model:</span>
+              <div className="flex bg-gray-800 rounded-lg p-1">
+                <button
+                  onClick={() => setAiModel('gpt-4o-mini')}
+                  className={`px-3 py-1 text-xs font-medium rounded transition-all ${
+                    aiModel === 'gpt-4o-mini'
+                      ? 'bg-blue-500 text-white'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  <span className="flex items-center gap-1">
+                    ⚡ Mini
+                    <span className="text-[10px] opacity-70">(fast)</span>
+                  </span>
+                </button>
+                <button
+                  onClick={() => setAiModel('gpt-4o')}
+                  className={`px-3 py-1 text-xs font-medium rounded transition-all ${
+                    aiModel === 'gpt-4o'
+                      ? 'bg-purple-500 text-white'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  <span className="flex items-center gap-1">
+                    🧠 GPT-4o
+                    <span className="text-[10px] opacity-70">(advanced)</span>
+                  </span>
+                </button>
+              </div>
             </div>
-          )}
+          </div>
+          
+          {/* Model Info */}
+          <div className="mt-2 px-3 py-2 bg-gray-800/50 rounded-lg border border-gray-700/50">
+            {aiModel === 'gpt-4o-mini' ? (
+              <p className="text-xs text-gray-400">
+                💡 <span className="text-blue-400 font-medium">GPT-4o-mini</span>: Best for quick posts, random ideas, and generic content. 
+                <span className="text-emerald-400"> (~€0.0004/post)</span>
+              </p>
+            ) : (
+              <p className="text-xs text-gray-400">
+                🚀 <span className="text-purple-400 font-medium">GPT-4o</span>: Best for personal storytelling, deep analysis, and creative content. 
+                <span className="text-orange-400"> (~€0.019/post)</span>
+              </p>
+            )}
+          </div>
         </div>
 
         {/* Content */}
@@ -212,13 +259,13 @@ export default function AIContentGenerator({
                 <span className="text-xl flex-shrink-0">
                   {error.includes('limit') || error.includes('Rate limit') ? '⏱️' : '⚠️'}
                 </span>
-                <div>
+                <div className="flex-1">
                   <p className="font-medium mb-1">
                     {error.includes('limit') || error.includes('Rate limit') 
                       ? 'Rate Limit Reached' 
                       : 'Error Generating Content'}
                   </p>
-                  <p className="text-xs opacity-90">{error}</p>
+                  <p className="text-xs opacity-90 whitespace-pre-line">{error}</p>
                   {(error.includes('limit') || error.includes('Rate limit')) && (
                     <div className="mt-3 pt-3 border-t border-orange-500/20">
                       <p className="text-xs font-medium mb-1">What to do:</p>
@@ -248,17 +295,6 @@ export default function AIContentGenerator({
                   {originalContent.length} characters
                 </p>
               </div>
-
-              {currentPrompt && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Your AI Instructions
-                  </label>
-                  <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg text-blue-300 text-sm">
-                    {currentPrompt}
-                  </div>
-                </div>
-              )}
 
               <button
                 onClick={generateContent}

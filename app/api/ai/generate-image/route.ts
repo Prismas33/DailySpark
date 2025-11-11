@@ -57,28 +57,58 @@ export async function POST(req: NextRequest) {
 
     if (!openaiResponse.ok) {
       const errorData = await openaiResponse.json();
-      console.error('DALL-E 3 API error:', errorData);
+      console.error('DALL-E 3 API error:', {
+        status: openaiResponse.status,
+        error: errorData
+      });
       
-      // Handle rate limit or billing errors
-      if (openaiResponse.status === 429) {
+      const errorMessage = errorData.error?.message || '';
+      const errorCode = errorData.error?.code || '';
+      const errorType = errorData.error?.type || '';
+
+      // Handle insufficient quota / billing errors
+      if (openaiResponse.status === 429 || errorType === 'insufficient_quota') {
         return NextResponse.json({ 
-          error: 'Rate limit reached or insufficient OpenAI credits. Check your billing at platform.openai.com',
+          error: 'Saldo insuficiente na conta OpenAI. Adicione créditos em platform.openai.com/account/billing',
+          errorDetails: errorMessage,
+          rateLimit: true,
+          insufficientQuota: true
+        }, { status: 429 });
+      }
+
+      // Handle rate limit (different from quota)
+      if (errorCode === 'rate_limit_exceeded') {
+        return NextResponse.json({ 
+          error: 'Limite de requisições excedido. Aguarde alguns segundos e tente novamente.',
+          errorDetails: errorMessage,
           rateLimit: true
         }, { status: 429 });
       }
 
       // Handle content policy violation
-      if (openaiResponse.status === 400 && errorData.error?.code === 'content_policy_violation') {
+      if (openaiResponse.status === 400 && errorCode === 'content_policy_violation') {
         return NextResponse.json({ 
-          error: 'Your prompt was flagged by OpenAI content policy. Try rephrasing it.',
+          error: 'Seu prompt foi bloqueado pela política de conteúdo da OpenAI. Tente reformular.',
+          errorDetails: errorMessage,
           contentPolicy: true
         }, { status: 400 });
       }
-      
+
+      // Handle invalid API key
+      if (openaiResponse.status === 401) {
+        return NextResponse.json({ 
+          error: 'Chave da API OpenAI inválida ou expirada. Verifique OPENAI_API_KEY no .env.local',
+          errorDetails: errorMessage,
+        }, { status: 401 });
+      }
+
+      // Generic error with OpenAI's message
       return NextResponse.json({ 
-        error: 'Failed to generate image with DALL-E 3',
+        error: errorMessage || 'Falha ao gerar imagem com DALL-E 3',
+        errorCode,
+        errorType,
         details: errorData 
-      }, { status: 500 });
+      }, { status: openaiResponse.status });
     }
 
     const data = await openaiResponse.json();

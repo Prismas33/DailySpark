@@ -19,11 +19,14 @@ export async function POST(req: NextRequest) {
     const uid = decodedToken.uid;
 
     const body = await req.json();
-    const { content, action } = body;
+    const { content, action, model } = body;
 
     if (!content) {
       return NextResponse.json({ error: 'Content is required' }, { status: 400 });
     }
+
+    // Default to gpt-4o-mini if not specified
+    const selectedModel = model || 'gpt-4o-mini';
 
     // ALWAYS read AI prompt directly from Firestore (source of truth)
     console.log('📖 Reading AI prompt from Firestore for user:', uid);
@@ -37,7 +40,8 @@ export async function POST(req: NextRequest) {
       hasAiPrompt: !!aiPrompt,
       promptLength: aiPrompt?.length || 0,
       promptPreview: aiPrompt ? aiPrompt.substring(0, 100) + '...' : 'NOT FOUND IN FIRESTORE',
-      action
+      action,
+      selectedModel
     });
 
     if (!aiPrompt) {
@@ -51,137 +55,82 @@ export async function POST(req: NextRequest) {
     // User has FULL control via their Firestore prompt
     const userMessage = `${aiPrompt}\n\n${content}`;
 
-    // Choose AI provider based on environment variables
-    const useGroq = process.env.GROQ_API_KEY;
-    const useOpenAI = process.env.OPENAI_API_KEY;
-    const useGemini = process.env.GEMINI_API_KEY;
-
-    let generatedContent: string | undefined;
-
-    if (useGroq) {
-      // Groq API (FREE, FAST, RECOMMENDED)
-      const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile', // Updated model (Nov 2024)
-          messages: [
-            { role: 'user', content: userMessage }
-          ],
-          temperature: 0.7,
-          max_tokens: 1000,
-        }),
-      });
-
-      if (!groqResponse.ok) {
-        const errorData = await groqResponse.json();
-        console.error('Groq API error:', errorData);
-        
-        // Handle rate limit errors
-        if (groqResponse.status === 429) {
-          return NextResponse.json({ 
-            error: 'Daily limit reached (14,400 requests/day). Try again tomorrow or use a different API key.',
-            rateLimit: true
-          }, { status: 429 });
-        }
-        
-        return NextResponse.json({ 
-          error: 'Failed to generate content with Groq',
-          details: errorData 
-        }, { status: 500 });
-      }
-
-      const groqData = await groqResponse.json();
-      generatedContent = groqData.choices[0]?.message?.content?.trim();
-
-    } else if (useOpenAI) {
-      // OpenAI API (PAID)
-      const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [
-            { role: 'user', content: userMessage }
-          ],
-          temperature: 0.7,
-          max_tokens: 1000,
-        }),
-      });
-
-      if (!openaiResponse.ok) {
-        const errorData = await openaiResponse.json();
-        console.error('OpenAI API error:', errorData);
-        
-        // Handle rate limit or insufficient credits
-        if (openaiResponse.status === 429) {
-          return NextResponse.json({ 
-            error: 'OpenAI rate limit reached or insufficient credits. Check your billing at platform.openai.com',
-            rateLimit: true
-          }, { status: 429 });
-        }
-        
-        return NextResponse.json({ 
-          error: 'Failed to generate content with OpenAI',
-          details: errorData 
-        }, { status: 500 });
-      }
-
-      const openaiData = await openaiResponse.json();
-      generatedContent = openaiData.choices[0]?.message?.content?.trim();
-
-    } else if (useGemini) {
-      // Google Gemini API (FREE)
-      const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{
-              text: userMessage
-            }]
-          }],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 1000,
-          }
-        }),
-      });
-
-      if (!geminiResponse.ok) {
-        const errorData = await geminiResponse.json();
-        console.error('Gemini API error:', errorData);
-        
-        // Handle rate limit (60 requests/minute)
-        if (geminiResponse.status === 429) {
-          return NextResponse.json({ 
-            error: 'Gemini rate limit reached (60 requests/minute). Wait 1 minute and try again.',
-            rateLimit: true
-          }, { status: 429 });
-        }
-        
-        return NextResponse.json({ 
-          error: 'Failed to generate content with Gemini',
-          details: errorData 
-        }, { status: 500 });
-      }
-
-      const geminiData = await geminiResponse.json();
-      generatedContent = geminiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-
-    } else {
+    // Check if OpenAI API key is configured
+    if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json({ 
-        error: 'No AI API key configured. Please add GROQ_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY to .env.local' 
+        error: 'OpenAI API key not configured. Add OPENAI_API_KEY to .env.local' 
       }, { status: 500 });
     }
+
+    console.log(`🎯 Using OpenAI ${selectedModel}`);
+
+    // OpenAI API (gpt-4o-mini or gpt-4o)
+    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: selectedModel, // 'gpt-4o-mini' or 'gpt-4o'
+        messages: [
+          { role: 'user', content: userMessage }
+        ],
+        temperature: 0.7,
+        max_tokens: 1000,
+      }),
+    });
+
+    if (!openaiResponse.ok) {
+      const errorData = await openaiResponse.json();
+      console.error('OpenAI API error:', {
+        status: openaiResponse.status,
+        model: selectedModel,
+        error: errorData
+      });
+      
+      const errorMessage = errorData.error?.message || '';
+      const errorCode = errorData.error?.code || '';
+      const errorType = errorData.error?.type || '';
+
+      // Handle insufficient quota / billing errors
+      if (openaiResponse.status === 429 || errorType === 'insufficient_quota') {
+        return NextResponse.json({ 
+          error: 'Saldo insuficiente na conta OpenAI. Adicione créditos em platform.openai.com/account/billing',
+          errorDetails: errorMessage,
+          rateLimit: true,
+          insufficientQuota: true
+        }, { status: 429 });
+      }
+
+      // Handle rate limit (different from quota)
+      if (errorCode === 'rate_limit_exceeded') {
+        return NextResponse.json({ 
+          error: 'Limite de requisições excedido. Aguarde alguns segundos e tente novamente.',
+          errorDetails: errorMessage,
+          rateLimit: true
+        }, { status: 429 });
+      }
+
+      // Handle invalid API key
+      if (openaiResponse.status === 401) {
+        return NextResponse.json({ 
+          error: 'Chave da API OpenAI inválida ou expirada. Verifique OPENAI_API_KEY no .env.local',
+          errorDetails: errorMessage,
+        }, { status: 401 });
+      }
+
+      // Generic error with OpenAI's message
+      return NextResponse.json({ 
+        error: errorMessage || 'Falha ao gerar conteúdo com OpenAI',
+        errorCode,
+        errorType,
+        details: errorData 
+      }, { status: openaiResponse.status });
+    }
+
+    const openaiData = await openaiResponse.json();
+    const generatedContent = openaiData.choices[0]?.message?.content?.trim();
 
     if (!generatedContent) {
       return NextResponse.json({ error: 'No content generated' }, { status: 500 });
@@ -192,6 +141,7 @@ export async function POST(req: NextRequest) {
       generatedContent,
       originalLength: content.length,
       newLength: generatedContent.length,
+      model: selectedModel,
     });
 
   } catch (error: any) {
