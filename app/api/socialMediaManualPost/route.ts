@@ -67,6 +67,49 @@ export async function POST(req: NextRequest) {
 
       console.log('📨 Manual post result from Firebase Function:', result);
 
+      // Log to post history
+      try {
+        const sentPlatforms: string[] = [];
+        const failedPlatforms: string[] = [];
+
+        // Parse results to determine which platforms succeeded
+        if (result.results && typeof result.results === 'object') {
+          Object.entries(result.results).forEach(([platform, response]: [string, any]) => {
+            if (response?.success || response?.status === 'success') {
+              sentPlatforms.push(platform);
+            } else {
+              failedPlatforms.push(platform);
+            }
+          });
+        } else {
+          // If all succeeded
+          sentPlatforms.push(...platforms);
+        }
+
+        const historyRecord = {
+          content: text,
+          platforms: platforms,
+          mediaUrl: imageUrl,
+          mediaType: imageUrl ? 'image' : null,
+          postType: 'manual',
+          status: failedPlatforms.length === 0 ? 'sent' : (sentPlatforms.length > 0 ? 'partial' : 'failed'),
+          sentAt: new Date(),
+          movedToHistoryAt: new Date(),
+          sentPlatforms: sentPlatforms,
+          failedPlatforms: failedPlatforms,
+          results: result.results,
+          jobId: jobId || null,
+          manualPostBy: 'web_interface',
+          failureReason: sentPlatforms.length === 0 ? result.message : null
+        };
+
+        await adminDb.collection('postHistory').add(historyRecord);
+        console.log('✅ Manual post logged to history');
+      } catch (historyError: any) {
+        console.error('⚠️ Warning: Could not log manual post to history:', historyError.message);
+        // Don't fail the request if history logging fails
+      }
+
       return NextResponse.json({ 
         success: true, 
         results: result.results || result,

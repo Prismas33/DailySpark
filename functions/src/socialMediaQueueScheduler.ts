@@ -111,18 +111,23 @@ export async function processSocialMediaQueue(): Promise<void> {
         
         // Check if at least one platform succeeded
         const hasSuccess = results.linkedin || results.x;
+        const sentPlatforms = post.platforms.filter(p => 
+          (p === 'linkedin' && results.linkedin) || 
+          (p === 'x' && results.x)
+        );
         const failedPlatforms = post.platforms.filter(p => 
           (p === 'linkedin' && !results.linkedin) || 
           (p === 'x' && !results.x)
         );
         
         console.log(`[SocialQueue] 📊 Results: LinkedIn=${results.linkedin}, X=${results.x}`);
+        console.log(`[SocialQueue] Sent to: ${sentPlatforms.join(', ') || 'none'}, Failed: ${failedPlatforms.join(', ') || 'none'}`);
         
         if (!hasSuccess && post.platforms.length > 0) {
           throw new Error(`Failed to post to ANY platform. Failed: ${failedPlatforms.join(', ')}`);
         }
         
-        // Log success BEFORE cleanup
+        // Log success BEFORE moving to history
         console.log(`[SocialQueue] 📝 Logging activity...`);
         await logSystemActivity(
           "system",
@@ -138,7 +143,25 @@ export async function processSocialMediaQueue(): Promise<void> {
         );
         console.log(`[SocialQueue] ✅ Activity logged`);
         
-        // Clean up media from Firebase Storage ONLY after successful post
+        // Create history record with full details
+        console.log(`[SocialQueue] 📚 Creating post history record...`);
+        
+        const historyRecord = {
+          ...post,
+          status: 'sent',
+          sentAt: new Date(),
+          movedToHistoryAt: new Date(),
+          results: results,
+          sentPlatforms: sentPlatforms,
+          failedPlatforms: failedPlatforms,
+          queueId: post.id
+        };
+        
+        const historyRef = db.collection('postHistory');
+        const historyDoc = await historyRef.add(historyRecord);
+        console.log(`[SocialQueue] ✅ History record created: ${historyDoc.id}`);
+        
+        // Clean up media from Firebase Storage ONLY after history is saved
         if (post.mediaUrl && post.mediaUrl.includes('firebasestorage.googleapis.com')) {
           try {
             console.log(`[SocialQueue] 🧹 Cleaning up media...`);
@@ -157,12 +180,12 @@ export async function processSocialMediaQueue(): Promise<void> {
           }
         }
         
-        // Delete post from queue ONLY after successful send AND logging
+        // Delete post from queue ONLY after history is saved
         console.log(`[SocialQueue] 🗑️ Deleting post from queue...`);
         await postDoc.ref.delete();
         console.log(`[SocialQueue] ✅ Post deleted from queue`);
         
-        console.log(`[SocialQueue] 🎉 COMPLETE - Post sent and removed successfully`);
+        console.log(`[SocialQueue] 🎉 COMPLETE - Post sent, archived to history, and removed from queue`);
         
       } catch (postError: any) {
         console.error(`[SocialQueue] ❌ ERROR processing post ${post.id}:`, postError.message);
@@ -182,8 +205,30 @@ export async function processSocialMediaQueue(): Promise<void> {
           }
         );
         
-        // DO NOT delete failed post - keep it in queue for manual retry
-        console.warn(`[SocialQueue] ⚠️ Post NOT deleted - keeping in queue for manual review/retry`);
+        // Move failed post to history with failure details
+        console.log(`[SocialQueue] 📚 Moving failed post to history...`);
+        const failedHistoryRecord = {
+          ...post,
+          status: 'failed',
+          failedAt: new Date(),
+          movedToHistoryAt: new Date(),
+          failureReason: postError.message,
+          errorStack: postError.stack?.substring(0, 500),
+          queueId: post.id
+        };
+        
+        try {
+          const historyRef = db.collection('postHistory');
+          const historyDoc = await historyRef.add(failedHistoryRecord);
+          console.log(`[SocialQueue] ✅ Failed post archived to history: ${historyDoc.id}`);
+          
+          // Delete from queue after archiving to history
+          await postDoc.ref.delete();
+          console.log(`[SocialQueue] ✅ Failed post deleted from queue (archived to history)`);
+        } catch (historyError: any) {
+          console.error(`[SocialQueue] ⚠️ Failed to move post to history:`, historyError.message);
+          console.warn(`[SocialQueue] ⚠️ Keeping post in queue for manual review`);
+        }
       }
     }
     

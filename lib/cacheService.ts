@@ -109,6 +109,7 @@ export const CACHE_KEYS = {
   USER_SETTINGS: 'user_settings',
   USER_PROFILE: 'user_profile',
   SOCIAL_QUEUE: 'social_queue',
+  POST_HISTORY: 'post_history',
   SOCIAL_ACCOUNTS: 'social_accounts',
   SAVED_TEMPLATES: 'saved_templates',
 } as const;
