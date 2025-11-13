@@ -34,9 +34,18 @@ async function callCloudFunction(data: any) {
 export async function POST(req: NextRequest) {
   try {
     const data = await req.json();
-    const { type, jobId, text, platforms, imageUrl } = data;
+    const { type, jobId, text, platforms, imageUrl, mediaUrl, mediaType } = data;
 
-    console.log('🚀 Received request:', { type, hasJobId: !!jobId, hasText: !!text, platforms });
+    const finalMediaUrl = mediaUrl || imageUrl;
+    console.log('🚀 Received request:', { 
+      type, 
+      hasJobId: !!jobId, 
+      hasText: !!text, 
+      platforms, 
+      hasMedia: !!finalMediaUrl,
+      mediaUrlValue: finalMediaUrl?.substring(0, 50),
+      mediaType 
+    });
 
     // Handle manual posting (new functionality)
     if (type === 'manual') {
@@ -56,26 +65,53 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // Use mediaUrl if provided, otherwise imageUrl (backwards compatibility)
+      // Already assigned at top of function
+      
+      console.log('🖼️ Media details:', {
+        mediaUrl,
+        imageUrl,
+        finalMediaUrl,
+        hasMediaUrl: !!finalMediaUrl,
+        mediaType
+      });
+
       // Call Firebase Function for manual posting
       const result = await callCloudFunction({
         type: 'manual',
         text,
         platforms,
-        imageUrl,
+        imageUrl: finalMediaUrl,
         jobId
       });
 
-      console.log('📨 Manual post result from Firebase Function:', result);
+      console.log('📨 Manual post result from Firebase Function:', JSON.stringify(result, null, 2));
 
-      // Log to post history
+      // Log to post history - wrap in try-catch but don't let it block the response
       try {
-        if (!adminDb) throw new Error('Firebase Admin not initialized');
+        if (!adminDb) {
+          console.error('❌ adminDb is not initialized');
+          throw new Error('Firebase Admin not initialized');
+        }
+        
+        console.log('📚 Starting to log post to history...');
         
         const sentPlatforms: string[] = [];
         const failedPlatforms: string[] = [];
 
         // Parse results to determine which platforms succeeded
-        if (result.results && typeof result.results === 'object') {
+        if (result.results && Array.isArray(result.results)) {
+          console.log('📊 Parsing array results:', result.results);
+          result.results.forEach((platformResult: any) => {
+            console.log('Processing platform result:', platformResult);
+            if (platformResult?.success) {
+              sentPlatforms.push(platformResult.platform);
+            } else {
+              failedPlatforms.push(platformResult?.platform || 'unknown');
+            }
+          });
+        } else if (result.results && typeof result.results === 'object') {
+          console.log('📊 Parsing object results:', result.results);
           Object.entries(result.results).forEach(([platform, response]: [string, any]) => {
             if (response?.success || response?.status === 'success') {
               sentPlatforms.push(platform);
@@ -84,31 +120,48 @@ export async function POST(req: NextRequest) {
             }
           });
         } else {
-          // If all succeeded
+          // If all succeeded, mark all platforms as sent
+          console.log('📊 No results object, assuming all platforms succeeded');
           sentPlatforms.push(...platforms);
         }
 
+        console.log('🎯 Final platform results:', { sentPlatforms, failedPlatforms, resultLength: result.results?.length });
+
+        console.log('📊 Platform results:', { sentPlatforms, failedPlatforms });
+
+        const now = new Date();
         const historyRecord = {
           content: text,
           platforms: platforms,
-          mediaUrl: imageUrl,
-          mediaType: imageUrl ? 'image' : null,
+          mediaUrl: finalMediaUrl || null,
+          mediaType: mediaType || (finalMediaUrl ? 'image' : null),
           postType: 'manual',
           status: failedPlatforms.length === 0 ? 'sent' : (sentPlatforms.length > 0 ? 'partial' : 'failed'),
-          sentAt: new Date(),
-          movedToHistoryAt: new Date(),
+          sentAt: now,
+          movedToHistoryAt: now,
           sentPlatforms: sentPlatforms,
           failedPlatforms: failedPlatforms,
           results: result.results,
           jobId: jobId || null,
           manualPostBy: 'web_interface',
-          failureReason: sentPlatforms.length === 0 ? result.message : null
+          failureReason: sentPlatforms.length === 0 ? result.message : null,
+          createdAt: now
         };
 
-        await adminDb.collection('postHistory').add(historyRecord);
-        console.log('✅ Manual post logged to history');
+        console.log('💾 About to save history record:', {
+          content: historyRecord.content.substring(0, 50),
+          platforms: historyRecord.platforms,
+          mediaUrl: !!historyRecord.mediaUrl,
+          sentPlatforms: historyRecord.sentPlatforms
+        });
+
+        const docRef = await adminDb.collection('postHistory').add(historyRecord);
+        console.log('✅ Manual post logged to history with ID:', docRef.id, 'and mediaUrl:', !!finalMediaUrl);
       } catch (historyError: any) {
-        console.error('⚠️ Warning: Could not log manual post to history:', historyError.message);
+        console.error('⚠️ Warning: Could not log manual post to history:', {
+          message: historyError.message,
+          stack: historyError.stack
+        });
         // Don't fail the request if history logging fails
       }
 

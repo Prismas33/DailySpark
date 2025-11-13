@@ -77,14 +77,25 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { action, postId } = await request.json();
+    const body = await request.json();
+    const { action, postId, content, platforms, scheduledAt } = body;
 
     if (!adminDb) throw new Error('Firebase Admin not initialized');
+
+    if (action === 'delete') {
+      // Delete post from history
+      await adminDb.collection('postHistory').doc(postId).delete();
+      
+      return NextResponse.json({
+        success: true,
+        message: 'Post deleted from history'
+      });
+    }
 
     if (action === 'repost') {
       // Get post from history
       const historyDoc = await adminDb.collection('postHistory').doc(postId).get();
-      
+    
       if (!historyDoc.exists) {
         return NextResponse.json(
           { success: false, error: 'Post not found in history' },
@@ -93,7 +104,7 @@ export async function POST(request: NextRequest) {
       }
 
       const post = historyDoc.data();
-      
+    
       if (!post) {
         return NextResponse.json(
           { success: false, error: 'Post data is empty' },
@@ -101,15 +112,32 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Create new scheduled post from history
+      // Validate platforms
+      if (!platforms || !Array.isArray(platforms) || platforms.length === 0) {
+        return NextResponse.json(
+          { success: false, error: 'Select at least one platform' },
+          { status: 400 }
+        );
+      }
+
+      // Parse scheduled date if provided
+      let scheduledTime = new Date();
+      if (scheduledAt) {
+        const parsedDate = new Date(scheduledAt);
+        if (!isNaN(parsedDate.getTime())) {
+          scheduledTime = parsedDate;
+        }
+      }
+
+      // Create new scheduled post from history with edited content
       const newPost = {
-        content: post.content,
-        platforms: post.platforms,
+        content: content || post.content,
+        platforms: platforms,
         mediaUrl: post.mediaUrl,
         mediaType: post.mediaType,
-        postType: post.postType,
+        postType: 'manual',
         status: 'scheduled',
-        scheduledAt: new Date(), // Schedule for now (scheduler will pick it up)
+        scheduledAt: scheduledTime,
         createdAt: new Date(),
         queuePosition: 1,
         addedBy: 'repost_from_history',
@@ -120,18 +148,9 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         success: true,
-        message: 'Post reposted successfully',
-        queueId: docRef.id
-      });
-    }
-
-    if (action === 'delete') {
-      // Delete from history
-      await adminDb.collection('postHistory').doc(postId).delete();
-
-      return NextResponse.json({
-        success: true,
-        message: 'Post deleted from history'
+        message: 'Post adicionado à fila!',
+        queueId: docRef.id,
+        scheduledFor: scheduledTime.toISOString()
       });
     }
 

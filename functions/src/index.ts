@@ -22,6 +22,7 @@ if (!admin.apps.length) {
 // import { syncLearn2EarnStatusJob, syncLearn2EarnStatusV2 } from "../syncLearn2EarnStatus"; // Commented out - file not found
 // import { scheduledSocialMediaPromotion } from "./socialMediaPromotionScheduler"; // REMOVED - No longer using jobs system
 import { manualSocialMediaPromotion } from "./manualSocialMediaPromotion";
+import { onQueuePostAdded } from "./queueTrigger";
 // import { scheduledJobsImport } from "./jobsImportScheduler"; // Commented out - file not found
 import { 
   scheduledSocialMediaQueue9AM, 
@@ -35,6 +36,7 @@ export {
   // syncLearn2EarnStatusV2, 
   // scheduledSocialMediaPromotion, // REMOVED - No longer using jobs system
   manualSocialMediaPromotion,
+  onQueuePostAdded,
   // scheduledJobsImport,
   scheduledSocialMediaQueue9AM,
   scheduledSocialMediaQueue12PM,

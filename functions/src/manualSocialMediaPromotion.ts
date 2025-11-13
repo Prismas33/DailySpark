@@ -163,10 +163,76 @@ async function postManualToLinkedIn(text: string, imageUrl?: string): Promise<bo
       }
     };
 
-    // Note: Image upload for personal profiles works differently than organizations
-    // For now, posting text-only to personal profile
+    // Handle image upload if provided
     if (imageUrl) {
-      console.warn('� [LINKEDIN] Image uploads not supported for personal profiles, posting text only');
+      console.log('[LINKEDIN] 🖼️ Processing image for post...');
+      try {
+        // Step 1: Download the image from Firebase Storage
+        const imageResponse = await fetch(imageUrl);
+        if (!imageResponse.ok) {
+          console.error('[LINKEDIN] Failed to download image:', imageResponse.statusText);
+          throw new Error('Failed to download image');
+        }
+
+        const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+        
+        // Step 2: Register the image asset with LinkedIn
+        const registerUrl = 'https://api.linkedin.com/v2/assets?action=registerUpload';
+        const registerResponse = await fetch(registerUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${LINKEDIN_ACCESS_TOKEN}`,
+            'Content-Type': 'application/json',
+            'X-Restli-Protocol-Version': '2.0.0'
+          },
+          body: JSON.stringify({
+            registerUploadRequest: {
+              recipes: ['urn:li:digitalmediaRecipe:feedshare-image'],
+              owner: `urn:li:person:${LINKEDIN_PERSON_ID}`,
+              serviceRelationships: [{
+                relationshipType: 'OWNER',
+                identifier: 'urn:li:userGeneratedContent'
+              }]
+            }
+          })
+        });
+
+        if (!registerResponse.ok) {
+          const errorText = await registerResponse.text();
+          console.error('[LINKEDIN] Failed to register image:', errorText);
+          throw new Error('Failed to register image');
+        }
+
+        const registerData = await registerResponse.json();
+        const uploadUrl = registerData.value.uploadMechanism['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest'].uploadUrl;
+        const assetUrn = registerData.value.asset;
+
+        // Step 3: Upload the image to the upload URL
+        const uploadResponse = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'image/jpeg'
+          },
+          body: imageBuffer
+        });
+
+        if (!uploadResponse.ok) {
+          console.error('[LINKEDIN] Failed to upload image:', uploadResponse.statusText);
+          throw new Error('Failed to upload image');
+        }
+
+        // Step 4: Add the image to the post payload
+        payload.specificContent['com.linkedin.ugc.ShareContent'].shareMediaCategory = 'IMAGE';
+        payload.specificContent['com.linkedin.ugc.ShareContent'].media = [{
+          status: 'READY',
+          media: assetUrn
+        }];
+
+        console.log('[LINKEDIN] 🟢 Image successfully added to post');
+      } catch (imageError: any) {
+        console.warn('[LINKEDIN] ⚠️ Failed to add image, posting text only:', imageError.message);
+        // Continue with text-only post
+      }
     }
 
     const response = await fetch(url, {
@@ -273,6 +339,14 @@ export const manualSocialMediaPromotion = onRequest(async (req, res) => {
       // Handle new manual posting format
       if (requestBody.type === 'manual') {
         const { text, platforms, imageUrl } = requestBody;
+        
+        console.log('[ManualSocialMedia] 📋 Manual post details:', {
+          hasText: !!text,
+          textLength: text?.length,
+          platforms,
+          hasImageUrl: !!imageUrl,
+          imageUrlValue: imageUrl ? imageUrl.substring(0, 80) : 'NULL'
+        });
         
         if (!text || !platforms || platforms.length === 0) {
           res.status(400).json({ error: "Text and at least one platform are required for manual posting" });

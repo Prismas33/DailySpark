@@ -272,9 +272,9 @@ const ManualPost: React.FC = () => {
           type: 'manual',
           text: content,
           platforms: Array.from(selectedPlatforms),
-          mediaUrl: mediaUrl || undefined,
+          mediaUrl: mediaUrl || null,
           postType: postType,
-          mediaType: mediaType
+          mediaType: mediaType || null
         }),
       });
 

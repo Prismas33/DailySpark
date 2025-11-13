@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { CacheService, CACHE_KEYS, CACHE_TTL } from '@/lib/cacheService';
+import { CacheService, CACHE_KEYS } from '@/lib/cacheService';
 
 interface HistoryPost {
   id: string;
@@ -19,6 +19,18 @@ interface HistoryPost {
   results?: any;
 }
 
+interface RepostModalState {
+  isOpen: boolean;
+  postId: string | null;
+  post: HistoryPost | null;
+  content: string;
+  platforms: string[];
+  scheduleType: 'now' | 'later';
+  scheduledDate: string;
+  scheduledTime: string;
+  isSubmitting: boolean;
+}
+
 const PostHistoryViewer: React.FC = () => {
   const [history, setHistory] = useState<HistoryPost[]>([]);
   const [loading, setLoading] = useState(false);
@@ -28,8 +40,18 @@ const PostHistoryViewer: React.FC = () => {
   const [platformFilter, setPlatformFilter] = useState<string>('all');
   const [daysFilter, setDaysFilter] = useState<number>(30);
   const [searchTerm, setSearchTerm] = useState('');
+  const [repostModal, setRepostModal] = useState<RepostModalState>({
+    isOpen: false,
+    postId: null,
+    post: null,
+    content: '',
+    platforms: [],
+    scheduleType: 'now',
+    scheduledDate: new Date().toISOString().split('T')[0],
+    scheduledTime: '12:00',
+    isSubmitting: false
+  });
 
-  // Format date utility
   const formatDate = (dateValue: string | null | undefined, format: 'locale' | 'localedate' | 'localetime' = 'locale'): string => {
     if (!dateValue) return '—';
     
@@ -50,16 +72,13 @@ const PostHistoryViewer: React.FC = () => {
     }
   };
 
-  // Load history
   const loadHistory = async (forceRefresh: boolean = false) => {
     setLoading(true);
     try {
-      // Clear cache if force refresh
       if (forceRefresh) {
         CacheService.remove(CACHE_KEYS.POST_HISTORY);
       }
 
-      // Try cache first (unless force refresh)
       if (!forceRefresh) {
         const cachedHistory = CacheService.get<HistoryPost[]>(CACHE_KEYS.POST_HISTORY);
         if (cachedHistory) {
@@ -85,7 +104,6 @@ const PostHistoryViewer: React.FC = () => {
 
       if (data.success) {
         setHistory(data.history);
-        // Cache for 20 minutes
         CacheService.set(CACHE_KEYS.POST_HISTORY, data.history, 1200);
       } else {
         setMessage({ type: 'error', text: data.error || 'Failed to load history' });
@@ -97,34 +115,71 @@ const PostHistoryViewer: React.FC = () => {
     }
   };
 
-  // Load on mount and when filters change
   useEffect(() => {
     loadHistory();
   }, [statusFilter, platformFilter, daysFilter]);
 
-  // Repost from history
-  const handleRepost = async (postId: string) => {
+  const handleOpenRepostModal = (post: HistoryPost) => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    setRepostModal({
+      isOpen: true,
+      postId: post.id,
+      post,
+      content: post.content,
+      platforms: post.sentPlatforms.length > 0 ? post.sentPlatforms : post.platforms,
+      scheduleType: 'now',
+      scheduledDate: tomorrow.toISOString().split('T')[0],
+      scheduledTime: '12:00',
+      isSubmitting: false
+    });
+  };
+
+  const handleSubmitRepost = async () => {
+    if (!repostModal.postId) return;
+
+    setRepostModal(prev => ({ ...prev, isSubmitting: true }));
+    
     try {
+      let scheduledAt = new Date();
+      
+      if (repostModal.scheduleType === 'later') {
+        scheduledAt = new Date(`${repostModal.scheduledDate}T${repostModal.scheduledTime}:00`);
+        
+        if (isNaN(scheduledAt.getTime())) {
+          throw new Error('Invalid date or time');
+        }
+      }
+
       const response = await fetch('/api/post-history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'repost', postId }),
+        body: JSON.stringify({
+          action: 'repost',
+          postId: repostModal.postId,
+          content: repostModal.content,
+          platforms: repostModal.platforms,
+          scheduledAt: scheduledAt.toISOString()
+        }),
       });
 
       const data = await response.json();
 
       if (data.success) {
-        setMessage({ type: 'success', text: 'Post added back to queue!' });
+        setMessage({ type: 'success', text: '✅ Post adicionado à fila!' });
+        setRepostModal(prev => ({ ...prev, isOpen: false }));
         loadHistory(true);
       } else {
-        throw new Error(data.error);
+        throw new Error(data.error || 'Unknown error');
       }
     } catch (error: any) {
-      setMessage({ type: 'error', text: error.message || 'Failed to repost' });
+      setMessage({ type: 'error', text: error.message || 'Erro ao repostar' });
+    } finally {
+      setRepostModal(prev => ({ ...prev, isSubmitting: false }));
     }
   };
 
-  // Delete from history
   const handleDelete = async (postId: string) => {
     if (!confirm('Delete this post from history?')) return;
 
@@ -148,7 +203,6 @@ const PostHistoryViewer: React.FC = () => {
     }
   };
 
-  // Status badge styling
   const getStatusBadge = (status: string) => {
     const statusLower = status.toLowerCase();
     if (statusLower === 'sent') return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30';
@@ -157,7 +211,6 @@ const PostHistoryViewer: React.FC = () => {
     return 'bg-gray-500/20 text-gray-300 border-gray-500/30';
   };
 
-  // Platform icon
   const getPlatformIcon = (platform: string) => {
     const p = platform.toLowerCase();
     if (p === 'linkedin') return '💼';
@@ -186,63 +239,67 @@ const PostHistoryViewer: React.FC = () => {
         </button>
       </div>
 
-      {/* Filters */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4 pb-4 border-b border-gray-700/50">
-        <div>
-          <label className="text-xs font-semibold text-gray-400 mb-2 block">Search</label>
-          <input
-            type="text"
-            placeholder="Search posts..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-200 text-sm focus:border-emerald-500 focus:outline-none"
-          />
-        </div>
+      <details className="mb-4 pb-4 border-b border-gray-700/50">
+        <summary className="text-sm font-semibold text-gray-300 cursor-pointer hover:text-emerald-400 transition-colors flex items-center gap-2 mb-3">
+          <span>🔍</span>
+          Filters
+        </summary>
+        
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 pt-2">
+          <div>
+            <label className="text-xs font-semibold text-gray-400 mb-2 block">Search</label>
+            <input
+              type="text"
+              placeholder="Search posts..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-200 text-sm focus:border-emerald-500 focus:outline-none"
+            />
+          </div>
 
-        <div>
-          <label className="text-xs font-semibold text-gray-400 mb-2 block">Status</label>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-200 text-sm focus:border-emerald-500 focus:outline-none"
-          >
-            <option value="all">All</option>
-            <option value="sent">Sent</option>
-            <option value="partial">Partial</option>
-            <option value="failed">Failed</option>
-          </select>
-        </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-400 mb-2 block">Status</label>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-200 text-sm focus:border-emerald-500 focus:outline-none"
+            >
+              <option value="all">All</option>
+              <option value="sent">Sent</option>
+              <option value="partial">Partial</option>
+              <option value="failed">Failed</option>
+            </select>
+          </div>
 
-        <div>
-          <label className="text-xs font-semibold text-gray-400 mb-2 block">Platform</label>
-          <select
-            value={platformFilter}
-            onChange={(e) => setPlatformFilter(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-200 text-sm focus:border-emerald-500 focus:outline-none"
-          >
-            <option value="all">All Platforms</option>
-            <option value="linkedin">LinkedIn</option>
-            <option value="x">X (Twitter)</option>
-            <option value="instagram">Instagram</option>
-          </select>
-        </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-400 mb-2 block">Platform</label>
+            <select
+              value={platformFilter}
+              onChange={(e) => setPlatformFilter(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-200 text-sm focus:border-emerald-500 focus:outline-none"
+            >
+              <option value="all">All Platforms</option>
+              <option value="linkedin">LinkedIn</option>
+              <option value="x">X (Twitter)</option>
+            </select>
+          </div>
 
-        <div>
-          <label className="text-xs font-semibold text-gray-400 mb-2 block">Days</label>
-          <select
-            value={daysFilter.toString()}
-            onChange={(e) => setDaysFilter(parseInt(e.target.value))}
-            className="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-200 text-sm focus:border-emerald-500 focus:outline-none"
-          >
-            <option value="7">Last 7 days</option>
-            <option value="30">Last 30 days</option>
-            <option value="90">Last 90 days</option>
-            <option value="365">Last year</option>
-          </select>
+          <div>
+            <label className="text-xs font-semibold text-gray-400 mb-2 block">Days</label>
+            <select
+              value={daysFilter.toString()}
+              onChange={(e) => setDaysFilter(parseInt(e.target.value))}
+              className="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-200 text-sm focus:border-emerald-500 focus:outline-none"
+            >
+              <option value="7">Last 7 days</option>
+              <option value="30">Last 30 days</option>
+              <option value="90">Last 90 days</option>
+              <option value="365">Last year</option>
+            </select>
+          </div>
         </div>
-      </div>
+      </details>
 
-      {/* Message Display */}
       {message && (
         <div className={`mb-4 p-4 rounded-xl text-sm font-medium ${
           message.type === 'success' 
@@ -253,7 +310,6 @@ const PostHistoryViewer: React.FC = () => {
         </div>
       )}
 
-      {/* History Posts */}
       {loading ? (
         <div className="flex flex-col items-center justify-center py-12">
           <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
@@ -276,12 +332,10 @@ const PostHistoryViewer: React.FC = () => {
                 key={post.id} 
                 className="bg-gray-800/50 rounded-lg border border-gray-700/50 overflow-hidden transition-all hover:border-emerald-500/50"
               >
-                {/* Collapsed/Header View */}
                 <button
                   onClick={() => setExpandedPostId(isExpanded ? null : post.id)}
                   className="w-full text-left p-3 md:p-4 flex items-start gap-3 hover:bg-gray-700/30 transition-colors"
                 >
-                  {/* Image Thumbnail (Mobile) */}
                   {post.mediaUrl && (
                     <img 
                       src={post.mediaUrl} 
@@ -290,9 +344,7 @@ const PostHistoryViewer: React.FC = () => {
                     />
                   )}
 
-                  {/* Content Preview */}
                   <div className="flex-1 min-w-0">
-                    {/* Status & Type */}
                     <div className="flex items-center gap-2 mb-2 flex-wrap">
                       <span className={`px-2 py-1 rounded text-xs font-semibold border ${getStatusBadge(post.status)}`}>
                         {post.status.toUpperCase()}
@@ -305,12 +357,10 @@ const PostHistoryViewer: React.FC = () => {
                       </span>
                     </div>
 
-                    {/* Content Preview */}
                     <p className="text-gray-300 text-sm leading-relaxed truncate">
                       {preview}
                     </p>
 
-                    {/* Platform Badges */}
                     <div className="flex gap-1 mt-2 flex-wrap">
                       {post.sentPlatforms.map((platform) => (
                         <span key={`sent-${platform}`} className="px-2 py-0.5 bg-emerald-500/20 text-xs rounded text-emerald-300 font-medium border border-emerald-500/30">
@@ -325,16 +375,13 @@ const PostHistoryViewer: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Expand Arrow */}
                   <div className="text-gray-400 flex-shrink-0 text-lg mt-1">
                     {isExpanded ? '▼' : '▶'}
                   </div>
                 </button>
 
-                {/* Expanded Details */}
                 {isExpanded && (
                   <div className="border-t border-gray-700/50 bg-gray-900/30 p-3 md:p-4 space-y-3">
-                    {/* Full Content */}
                     <div>
                       <p className="text-xs font-semibold text-gray-400 mb-2">📝 Full Content</p>
                       <p className="text-gray-200 text-sm leading-relaxed whitespace-pre-wrap break-words">
@@ -342,7 +389,6 @@ const PostHistoryViewer: React.FC = () => {
                       </p>
                     </div>
 
-                    {/* Full Image (if exists) */}
                     {post.mediaUrl && (
                       <div>
                         <p className="text-xs font-semibold text-gray-400 mb-2">🖼️ Media</p>
@@ -354,7 +400,6 @@ const PostHistoryViewer: React.FC = () => {
                       </div>
                     )}
 
-                    {/* Dates */}
                     <div className="grid grid-cols-2 gap-3 text-xs">
                       <div>
                         <p className="text-gray-400 font-semibold mb-1">📅 Sent</p>
@@ -366,58 +411,20 @@ const PostHistoryViewer: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Platforms Status */}
-                    <div>
-                      <p className="text-xs font-semibold text-gray-400 mb-2">📱 Platforms</p>
-                      <div className="flex flex-wrap gap-2">
-                        {post.sentPlatforms.map((platform) => (
-                          <span key={`sent-${platform}`} className="px-3 py-1 bg-emerald-500/20 text-emerald-300 text-xs rounded-lg border border-emerald-500/30 font-medium">
-                            ✓ {getPlatformIcon(platform)} {platform}
-                          </span>
-                        ))}
-                        {post.failedPlatforms.map((platform) => (
-                          <span key={`failed-${platform}`} className="px-3 py-1 bg-red-500/20 text-red-300 text-xs rounded-lg border border-red-500/30 font-medium">
-                            ✗ {getPlatformIcon(platform)} {platform}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Failure Reason (if failed) */}
-                    {post.failedPlatforms.length > 0 && post.failureReason && (
-                      <div>
-                        <p className="text-xs font-semibold text-red-400 mb-2">⚠️ Failure Reason</p>
-                        <p className="text-red-300 text-xs">{post.failureReason}</p>
-                      </div>
-                    )}
-
-                    {/* Platform Details */}
-                    {post.results && (
-                      <div>
-                        <p className="text-xs font-semibold text-gray-400 mb-2">📊 Details</p>
-                        <pre className="text-xs bg-gray-900 p-2 rounded overflow-auto max-h-40 text-gray-300 border border-gray-700">
-                          {JSON.stringify(post.results, null, 2)}
-                        </pre>
-                      </div>
-                    )}
-
-                    {/* Actions */}
                     <div className="flex gap-2 pt-3 border-t border-gray-700/50 flex-wrap">
-                      {post.status !== 'failed' && (
-                        <button
-                          onClick={() => handleRepost(post.id)}
-                          className="flex-1 min-w-[120px] px-4 py-2 bg-emerald-500/20 text-emerald-300 text-xs font-medium rounded-lg hover:bg-emerald-500/30 border border-emerald-500/30 transition-all flex items-center justify-center gap-2"
-                        >
-                          <span>📋</span>
-                          Repost
-                        </button>
-                      )}
+                      <button
+                        onClick={() => handleOpenRepostModal(post)}
+                        className="flex-1 min-w-[120px] px-4 py-2 bg-emerald-500/20 text-emerald-300 text-xs font-medium rounded-lg hover:bg-emerald-500/30 border border-emerald-500/30 transition-all flex items-center justify-center gap-2"
+                      >
+                        <span>📋</span>
+                        Repostar
+                      </button>
                       <button
                         onClick={() => handleDelete(post.id)}
                         className="flex-1 min-w-[120px] px-4 py-2 bg-red-500/20 text-red-300 text-xs font-medium rounded-lg hover:bg-red-500/30 border border-red-500/30 transition-all flex items-center justify-center gap-2"
                       >
                         <span>🗑️</span>
-                        Delete
+                        Apagar
                       </button>
                     </div>
                   </div>
@@ -428,13 +435,211 @@ const PostHistoryViewer: React.FC = () => {
         </div>
       )}
 
-      {/* Summary */}
       {history.length > 0 && (
         <div className="mt-4 text-xs text-gray-400 text-center">
           Showing <strong>{filteredHistory.length}</strong> of <strong>{history.length}</strong> posts
         </div>
       )}
-      
+
+      {repostModal.isOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl border border-gray-700/50 shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-gray-900/95 backdrop-blur border-b border-gray-700/50 p-6 flex items-center justify-between">
+              <h2 className="text-xl font-bold bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">
+                📋 Repostar
+              </h2>
+              <button
+                onClick={() => setRepostModal(prev => ({ ...prev, isOpen: false }))}
+                className="text-gray-400 hover:text-white text-2xl transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {repostModal.post?.mediaUrl && (
+                <div>
+                  <label className="text-xs font-semibold text-gray-400 mb-2 block">🖼️ Imagem</label>
+                  <img 
+                    src={repostModal.post.mediaUrl} 
+                    alt="Post media" 
+                    className="w-full h-40 object-cover rounded-lg shadow-lg border border-gray-700"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="text-xs font-semibold text-gray-400 mb-2 block">📝 Conteúdo</label>
+                <textarea
+                  value={repostModal.content}
+                  onChange={(e) => setRepostModal(prev => ({ ...prev, content: e.target.value }))}
+                  maxLength={5000}
+                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-200 text-sm focus:border-emerald-500 focus:outline-none resize-none"
+                  rows={4}
+                />
+                <p className="text-xs text-gray-500 mt-1">{repostModal.content.length}/5000</p>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-400 mb-2 block">📱 Plataformas</label>
+                <div className="space-y-2">
+                  {['linkedin', 'x'].map((platform) => (
+                    <label key={platform} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={repostModal.platforms.includes(platform)}
+                        onChange={(e) => {
+                          setRepostModal(prev => ({
+                            ...prev,
+                            platforms: e.target.checked
+                              ? [...prev.platforms, platform]
+                              : prev.platforms.filter(p => p !== platform)
+                          }));
+                        }}
+                        className="w-4 h-4 rounded border-gray-600 bg-gray-700 cursor-pointer"
+                      />
+                      <span className="text-sm text-gray-300 capitalize">{platform === 'x' ? 'X (Twitter)' : platform}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-400 mb-2 block">⏰ Quando enviar?</label>
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="scheduleType"
+                      value="now"
+                      checked={repostModal.scheduleType === 'now'}
+                      onChange={() => setRepostModal(prev => ({ ...prev, scheduleType: 'now' }))}
+                      className="w-4 h-4 cursor-pointer"
+                    />
+                    <span className="text-sm text-gray-300">Agora</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="scheduleType"
+                      value="later"
+                      checked={repostModal.scheduleType === 'later'}
+                      onChange={() => setRepostModal(prev => ({ ...prev, scheduleType: 'later' }))}
+                      className="w-4 h-4 cursor-pointer"
+                    />
+                    <span className="text-sm text-gray-300">Agendar para...</span>
+                  </label>
+                </div>
+              </div>
+
+              {repostModal.scheduleType === 'later' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-semibold text-gray-400 mb-2 block">📅 Data</label>
+                    <input
+                      type="date"
+                      value={repostModal.scheduledDate}
+                      onChange={(e) => setRepostModal(prev => ({ ...prev, scheduledDate: e.target.value }))}
+                      min={new Date().toISOString().split('T')[0]}
+                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-200 text-sm focus:border-emerald-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-gray-400 mb-2 block">🕐 Hora</label>
+                    <input
+                      type="time"
+                      value={repostModal.scheduledTime}
+                      onChange={(e) => setRepostModal(prev => ({ ...prev, scheduledTime: e.target.value }))}
+                      className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-200 text-sm focus:border-emerald-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="border-t border-gray-700/50 p-6 flex gap-3">
+              <button
+                onClick={() => setRepostModal(prev => ({ ...prev, isOpen: false }))}
+                disabled={repostModal.isSubmitting}
+                className="flex-1 px-4 py-2 bg-gray-700 text-gray-300 text-sm font-medium rounded-lg hover:bg-gray-600 disabled:opacity-50 transition-all"
+              >
+                Cancelar
+              </button>
+              
+              {repostModal.scheduleType === 'now' ? (
+                <button
+                  onClick={async () => {
+                    if (!repostModal.postId || repostModal.platforms.length === 0) {
+                      setMessage({ type: 'error', text: 'Selecione pelo menos uma plataforma' });
+                      return;
+                    }
+                    setRepostModal(prev => ({ ...prev, isSubmitting: true }));
+                    try {
+                      const res = await fetch('/api/socialMediaManualPost', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          type: 'manual',
+                          text: repostModal.content,
+                          platforms: repostModal.platforms,
+                          mediaUrl: repostModal.post?.mediaUrl || null,
+                          imageUrl: repostModal.post?.mediaUrl || null,
+                          mediaType: repostModal.post?.mediaType || (repostModal.post?.mediaUrl ? 'image' : null)
+                        })
+                      });
+                      const data = await res.json();
+                      if (res.ok && data.success) {
+                        setMessage({ type: 'success', text: '✅ Post enviado agora!' });
+                        setRepostModal(prev => ({ ...prev, isOpen: false }));
+                        loadHistory(true);
+                      } else {
+                        throw new Error(data.error || 'Falha ao enviar');
+                      }
+                    } catch (err: any) {
+                      setMessage({ type: 'error', text: err.message });
+                    } finally {
+                      setRepostModal(prev => ({ ...prev, isSubmitting: false }));
+                    }
+                  }}
+                  disabled={repostModal.isSubmitting || repostModal.platforms.length === 0}
+                  className="flex-1 px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white text-sm font-medium rounded-lg hover:from-amber-600 hover:to-orange-600 disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-lg"
+                >
+                  {repostModal.isSubmitting ? (
+                    <>
+                      <span className="animate-spin">⏳</span>
+                      Enviando...
+                    </>
+                  ) : (
+                    <>
+                      <span>⚡</span>
+                      Enviar agora
+                    </>
+                  )}
+                </button>
+              ) : (
+                <button
+                  onClick={handleSubmitRepost}
+                  disabled={repostModal.isSubmitting || repostModal.platforms.length === 0}
+                  className="flex-1 px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 text-white text-sm font-medium rounded-lg hover:from-emerald-600 hover:to-teal-600 disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-lg"
+                >
+                  {repostModal.isSubmitting ? (
+                    <>
+                      <span className="animate-spin">⏳</span>
+                      Agendando...
+                    </>
+                  ) : (
+                    <>
+                      <span>📅</span>
+                      Agendar
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <style jsx>{`
         .custom-scrollbar::-webkit-scrollbar {
           width: 8px;
