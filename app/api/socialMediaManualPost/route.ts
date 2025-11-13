@@ -69,6 +69,8 @@ export async function POST(req: NextRequest) {
 
       // Log to post history
       try {
+        if (!adminDb) throw new Error('Firebase Admin not initialized');
+        
         const sentPlatforms: string[] = [];
         const failedPlatforms: string[] = [];
 
