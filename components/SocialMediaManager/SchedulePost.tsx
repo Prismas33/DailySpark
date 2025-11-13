@@ -17,9 +17,14 @@ const SchedulePost: React.FC<SchedulePostProps> = ({ onSuccess }) => {
   const [scheduledTime, setScheduledTime] = useState('09:00'); // Default to 9 AM UTC
   const [selectedPlatforms, setSelectedPlatforms] = useState<Platform[]>(['linkedin', 'x']);
   const [mediaUrl, setMediaUrl] = useState('');
+  const [mediaFile, setMediaFile] = useState<File | null>(null);
+  const [mediaType, setMediaType] = useState<'image' | 'video' | null>(null);
   const [postType, setPostType] = useState<'post' | 'reel'>('post');
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [uploading, setUploading] = useState<boolean>(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [validationWarnings, setValidationWarnings] = useState<string[]>([]);
+  const [message, setMessage] = useState<{ type: 'success' | 'error' | 'warning'; text: string } | null>(null);
   const [showAI, setShowAI] = useState(false);
   const [aiPrompt, setAiPrompt] = useState<string>('');
 
@@ -51,6 +56,185 @@ const SchedulePost: React.FC<SchedulePostProps> = ({ onSuccess }) => {
         ? prev.filter(p => p !== platform)
         : [...prev, platform]
     );
+  };
+
+  // Validate image dimensions (async - loads image to check size)
+  const validateImageDimensions = (file: File): Promise<{ width: number; height: number; aspectRatio: number }> => {
+    return new Promise((resolve, reject) => {
+      const img = document.createElement('img');
+      const url = URL.createObjectURL(file);
+      
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        resolve({
+          width: img.width,
+          height: img.height,
+          aspectRatio: img.width / img.height
+        });
+      };
+      
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('Failed to load image'));
+      };
+      
+      img.src = url;
+    });
+  };
+
+  // Validate media client-side before upload
+  const validateMediaClientSide = async (file: File): Promise<{ isValid: boolean; warnings: string[] }> => {
+    const isImage = file.type.startsWith('image/');
+    const isVideo = file.type.startsWith('video/');
+    const warnings: string[] = [];
+    let isValid = true;
+
+    // Check if Reel requires video
+    if (postType === 'reel' && !isVideo) {
+      warnings.push('❌ Reels require video content, not images');
+      return { isValid: false, warnings };
+    }
+
+    // File size validation
+    const fileSizeMB = file.size / 1024 / 1024;
+    
+    if (isImage) {
+      // LinkedIn: max 8MB, X: max 5MB
+      if (file.size > 8 * 1024 * 1024) {
+        warnings.push(`❌ Image too large (${fileSizeMB.toFixed(1)}MB). Max: 8MB for LinkedIn, 5MB for X`);
+        isValid = false;
+      } else if (file.size > 5 * 1024 * 1024) {
+        warnings.push(`⚠️ Image too large for X (${fileSizeMB.toFixed(1)}MB, max 5MB). Will work on LinkedIn only.`);
+      }
+
+      // Check dimensions
+      try {
+        const dims = await validateImageDimensions(file);
+        const ratio = dims.aspectRatio;
+        
+        warnings.push(`📐 Image: ${dims.width}x${dims.height} (${ratio.toFixed(2)}:1)`);
+        
+        // LinkedIn: 1:1 to 1.91:1
+        if (ratio < 0.95 || ratio > 2.0) {
+          warnings.push(`⚠️ LinkedIn may crop image (ideal ratio: 1:1 to 1.91:1)`);
+        }
+        
+        // X: 1:1 to 2:1
+        if (ratio < 0.95 || ratio > 2.1) {
+          warnings.push(`⚠️ X may crop image (ideal ratio: 1:1 to 2:1)`);
+        }
+        
+        if (ratio >= 0.95 && ratio <= 1.91) {
+          warnings.push(`✅ Aspect ratio perfect for all platforms`);
+        }
+      } catch (error) {
+        warnings.push(`⚠️ Could not validate dimensions`);
+      }
+    }
+
+    if (isVideo) {
+      // LinkedIn: max 200MB, X: max 512MB
+      if (file.size > 512 * 1024 * 1024) {
+        warnings.push(`❌ Video too large (${fileSizeMB.toFixed(1)}MB). Max: 512MB`);
+        isValid = false;
+      } else if (file.size > 200 * 1024 * 1024) {
+        warnings.push(`⚠️ Video too large for LinkedIn (${fileSizeMB.toFixed(1)}MB, max 200MB). Will work on X only.`);
+      } else {
+        warnings.push(`✅ Video size OK (${fileSizeMB.toFixed(1)}MB)`);
+      }
+
+      if (postType === 'reel') {
+        warnings.push('🎬 Reel: Certifique-se que o vídeo tem 9:16 (vertical) e 3-90s de duração');
+      } else {
+        warnings.push('📹 Vídeo: LinkedIn max 10min, X max 2:20min');
+      }
+    }
+
+    return { isValid, warnings };
+  };
+
+  // Media upload handler (images and videos)
+  const handleMediaUpload = async (file: File) => {
+    if (!file) return;
+
+    const isImage = file.type.startsWith('image/');
+    const isVideo = file.type.startsWith('video/');
+    
+    if (!isImage && !isVideo) {
+      setMessage({ type: 'error', text: 'Only images and videos are supported' });
+      return;
+    }
+
+    // Validate BEFORE upload
+    setMessage({ type: 'warning', text: 'Validating media...' });
+    const validation = await validateMediaClientSide(file);
+    setValidationWarnings(validation.warnings);
+
+    if (!validation.isValid) {
+      setMessage({ type: 'error', text: 'Media validation failed. Check warnings below.' });
+      return;
+    }
+
+    setUploading(true);
+    setMediaType(isVideo ? 'video' : 'image');
+    
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('postType', postType);
+
+      const response = await fetch('/api/storage/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        setMediaUrl(result.url);
+        setMediaFile(file);
+        
+        // Show validation warnings from backend
+        const backendWarnings = result.validation?.warnings || [];
+        setValidationWarnings(backendWarnings);
+        
+        // Success message
+        const hasErrors = backendWarnings.some((w: string) => w.includes('❌') || w.includes('⚠️'));
+        if (hasErrors) {
+          setMessage({ type: 'warning', text: `${isVideo ? 'Video' : 'Image'} uploaded with warnings. Check below.` });
+        } else {
+          setMessage({ type: 'success', text: `${isVideo ? 'Video' : 'Image'} uploaded successfully!` });
+        }
+      } else {
+        setMessage({ type: 'error', text: `Upload failed: ${result.error}` });
+        if (result.warnings && result.warnings.length > 0) {
+          setValidationWarnings(result.warnings);
+        }
+      }
+    } catch (error) {
+      setMessage({ type: 'error', text: 'Upload error. Please try again.' });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // Drag and drop handlers
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0 && (files[0].type.startsWith('image/') || files[0].type.startsWith('video/'))) {
+      handleMediaUpload(files[0]);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
   };
 
   const schedulePost = async () => {
@@ -97,6 +281,9 @@ const SchedulePost: React.FC<SchedulePostProps> = ({ onSuccess }) => {
         setScheduledDate('');
         setScheduledTime('');
         setMediaUrl('');
+        setMediaFile(null);
+        setMediaType(null);
+        setValidationWarnings([]);
         setPostType('post');
         onSuccess?.();
       } else {
@@ -121,9 +308,11 @@ const SchedulePost: React.FC<SchedulePostProps> = ({ onSuccess }) => {
         <div className={`mb-4 p-3 rounded-lg flex items-center gap-2 ${
           message.type === 'success' 
             ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400' 
+            : message.type === 'warning'
+            ? 'bg-yellow-500/10 border border-yellow-500/30 text-yellow-400'
             : 'bg-red-500/10 border border-red-500/30 text-red-400'
         }`}>
-          {message.type === 'success' ? '✓' : '✕'}
+          {message.type === 'success' ? '✓' : message.type === 'warning' ? '⚠' : '✕'}
           <span className="text-sm">{message.text}</span>
         </div>
       )}
@@ -190,19 +379,81 @@ const SchedulePost: React.FC<SchedulePostProps> = ({ onSuccess }) => {
         </div>
       </div>
 
-      {/* Media URL (Optional) */}
-      <div className="mb-4">
+      {/* Validation Warnings */}
+      {validationWarnings.length > 0 && (
+        <div className="mb-6 p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/30">
+          {validationWarnings.map((warning, idx) => (
+            <div key={idx} className="text-sm text-yellow-300 mb-1 last:mb-0">
+              {warning}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Media Upload with Drag & Drop */}
+      <div className="mb-6">
         <label className="block text-sm font-medium text-gray-300 mb-3">
-          <Image className="w-4 h-4 inline mr-2" />
-          Image or Video URL (Optional)
+          {postType === 'reel' ? 'Video (Required for Reels)' : 'Image or Video (Optional)'}
         </label>
-        <input
-          type="url"
-          value={mediaUrl}
-          onChange={(e) => setMediaUrl(e.target.value)}
-          placeholder="https://example.com/image.jpg or video.mp4"
-          className="w-full px-4 py-3 bg-gray-900/50 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 focus:outline-none transition-all"
-        />
+        <div
+          className={`p-6 border-2 border-dashed rounded-xl text-center cursor-pointer transition-all ${
+            dragOver 
+              ? 'border-emerald-400 bg-emerald-400/10' 
+              : 'border-gray-600/50 bg-gray-800/30 hover:border-gray-500'
+          }`}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onClick={() => document.getElementById('schedule-media-upload')?.click()}
+        >
+          {uploading ? (
+            <div className="flex items-center justify-center">
+              <div className="w-6 h-6 border-2 border-emerald-500 rounded-full animate-spin border-t-transparent mr-2"></div>
+              <span className="text-emerald-300 font-medium">Uploading...</span>
+            </div>
+          ) : mediaUrl ? (
+            <div>
+              {mediaType === 'video' ? (
+                <video src={mediaUrl} className="max-w-60 max-h-40 mx-auto rounded-lg mb-3 shadow-lg" controls />
+              ) : (
+                <img src={mediaUrl} alt="Preview" className="max-w-40 max-h-40 mx-auto rounded-lg mb-3 shadow-lg" />
+              )}
+              <p className="text-emerald-400 text-sm font-medium">✓ {mediaType === 'video' ? 'Video' : 'Image'} ready</p>
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMediaUrl("");
+                  setMediaFile(null);
+                  setMediaType(null);
+                  setValidationWarnings([]);
+                }}
+                className="mt-2 text-xs text-gray-400 hover:text-red-400"
+              >
+                Remove
+              </button>
+            </div>
+          ) : (
+            <div>
+              <div className="text-5xl mb-3">{postType === 'reel' ? '🎬' : '📸'}</div>
+              <p className="text-gray-300 font-medium mb-1">
+                Drop {postType === 'reel' ? 'video' : 'image/video'} here or click to upload
+              </p>
+              <p className="text-xs text-gray-500">
+                {postType === 'reel' 
+                  ? 'MP4, MOV - 9:16 vertical, 3-90s'
+                  : 'Images: PNG, JPG, GIF up to 10MB | Videos: MP4, MOV up to 512MB'
+                }
+              </p>
+            </div>
+          )}
+          <input
+            id="schedule-media-upload"
+            type="file"
+            accept={postType === 'reel' ? 'video/*' : 'image/*,video/*'}
+            className="hidden"
+            onChange={(e) => e.target.files?.[0] && handleMediaUpload(e.target.files[0])}
+          />
+        </div>
       </div>
 
       {/* Platform Selection */}
