@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- No background - transparent -->
+  
+  <!-- Gradient definitions -->
+  <defs>
+    <linearGradient id="mainGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#10b981;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#14b8a6;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="goldGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#fbbf24;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#f59e0b;stop-opacity:1" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Outer sparkle dots (small) -->
+  <circle cx="50" cy="40" r="8" fill="url(#goldGradient)" opacity="0.9" filter="url(#glow)"/>
+  <circle cx="206" cy="80" r="6" fill="url(#goldGradient)" opacity="0.8" filter="url(#glow)"/>
+  <circle cx="220" cy="180" r="7" fill="url(#goldGradient)" opacity="0.85" filter="url(#glow)"/>
+  <circle cx="60" cy="210" r="6" fill="url(#goldGradient)" opacity="0.8" filter="url(#glow)"/>
+  <circle cx="20" cy="150" r="5" fill="url(#goldGradient)" opacity="0.75" filter="url(#glow)"/>
+  
+  <!-- Main central star (4-pointed, like sparkle emoji) -->
+  <g transform="translate(128, 128)" filter="url(#glow)">
+    <!-- Outer star points (longer) -->
+    <polygon points="0,-70 20,-15 70,-15 35,20 55,75 0,40 -55,75 -35,20 -70,-15 -20,-15" 
+             fill="url(#mainGradient)" stroke="none"/>
+    
+    <!-- Inner bright core -->
+    <circle cx="0" cy="0" r="20" fill="#ffffff" opacity="0.6"/>
+    <circle cx="0" cy="0" r="12" fill="#10b981" opacity="0.8"/>
+  </g>
+  
+  <!-- Additional small sparkles around main star -->
+  <circle cx="140" cy="60" r="4" fill="url(#goldGradient)" opacity="0.7"/>
+  <circle cx="95" cy="95" r="4" fill="url(#goldGradient)" opacity="0.7"/>
+  <circle cx="170" cy="140" r="5" fill="url(#goldGradient)" opacity="0.75"/>
+  <circle cx="110" cy="170" r="4" fill="url(#goldGradient)" opacity="0.7"/>
+</svg>
