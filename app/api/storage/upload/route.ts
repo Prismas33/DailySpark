@@ -3,15 +3,15 @@ import { adminStorage } from '@/lib/firebaseServer';
 import axios from 'axios';
 import sizeOf from 'image-size';
 
-// Media validation configuration
+// Media validation configuration (based on official platform APIs)
 const PLATFORM_LIMITS = {
   linkedin: {
-    image: { maxSize: 8 * 1024 * 1024, aspectRatio: { min: 1, max: 1.91 } },
+    image: { maxSize: 10 * 1024 * 1024, aspectRatio: { min: 1, max: 1.91 } }, // 10MB (practical limit)
     video: { maxSize: 200 * 1024 * 1024, aspectRatio: { min: 1/2.4, max: 2.4 }, maxDuration: 600 }
   },
   x: {
-    image: { maxSize: 5 * 1024 * 1024, aspectRatio: { min: 1, max: 2 } },
-    video: { maxSize: 512 * 1024 * 1024, aspectRatio: { min: 1/3, max: 3 }, maxDuration: 140 }
+    image: { maxSize: 5 * 1024 * 1024, aspectRatio: { min: 1, max: 2 } }, // 5MB PNG official limit
+    video: { maxSize: 512 * 1024 * 1024, aspectRatio: { min: 1/3, max: 3 }, maxDuration: 140 } // 512MB official
   },
   facebook: {
     image: { maxSize: 4 * 1024 * 1024, aspectRatio: { min: 4/5, max: 1.91 } },
@@ -43,7 +43,7 @@ function validateImageDimensions(buffer: Buffer, fileSize: number, isReel: boole
     // Check LinkedIn limits
     const linkedinLimits = PLATFORM_LIMITS.linkedin.image;
     if (fileSize > linkedinLimits.maxSize) {
-      warnings.push(`⚠️ LinkedIn: Image too large (${(fileSize/1024/1024).toFixed(1)}MB, max 8MB)`);
+      warnings.push(`⚠️ LinkedIn: Image too large (${(fileSize/1024/1024).toFixed(1)}MB, max 10MB)`);
       isValid = false;
     }
     if (aspectRatio < linkedinLimits.aspectRatio.min || aspectRatio > linkedinLimits.aspectRatio.max) {
@@ -160,6 +160,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Storage indisponível (Admin não inicializado)' }, { status: 500 });
     }
     const bucket = adminStorage.bucket();
+    console.log('🪣 Using bucket:', bucket.name);
     const fileRef = bucket.file(filePath);
     
     await fileRef.save(buffer, {

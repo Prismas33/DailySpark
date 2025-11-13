@@ -24,7 +24,7 @@ const PLATFORM_REQUIREMENTS = {
     image: {
       minAspectRatio: 1 / 1, // 1:1
       maxAspectRatio: 1.91 / 1, // 1.91:1
-      maxFileSize: 8 * 1024 * 1024, // 8MB
+      maxFileSize: 10 * 1024 * 1024, // 10MB (practical limit)
     },
     video: {
       minAspectRatio: 1 / 2.4, // Vertical

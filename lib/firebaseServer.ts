@@ -14,9 +14,11 @@ let adminApp: App | undefined;
 
 if (!getApps().length) {
   if (projectId && clientEmail && privateKey) {
+    const storageBucket = process.env.FIREBASE_STORAGE_BUCKET || `${projectId}.appspot.com`;
+    console.log('🔥 Firebase Admin initializing with storageBucket:', storageBucket);
     adminApp = initializeApp({
       credential: cert({ projectId, clientEmail, privateKey }),
-      storageBucket: process.env.FIREBASE_STORAGE_BUCKET || `${projectId}.appspot.com`
+      storageBucket: storageBucket
     });
   } else {
     console.warn('Firebase Admin credentials missing. Some server features may fail.');

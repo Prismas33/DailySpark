@@ -99,9 +99,9 @@ const SchedulePost: React.FC<SchedulePostProps> = ({ onSuccess }) => {
     const fileSizeMB = file.size / 1024 / 1024;
     
     if (isImage) {
-      // LinkedIn: max 8MB, X: max 5MB
-      if (file.size > 8 * 1024 * 1024) {
-        warnings.push(`❌ Image too large (${fileSizeMB.toFixed(1)}MB). Max: 8MB for LinkedIn, 5MB for X`);
+      // LinkedIn: max 10MB, X: max 5MB
+      if (file.size > 10 * 1024 * 1024) {
+        warnings.push(`❌ Image too large (${fileSizeMB.toFixed(1)}MB). Max: 10MB for LinkedIn, 5MB for X`);
         isValid = false;
       } else if (file.size > 5 * 1024 * 1024) {
         warnings.push(`⚠️ Image too large for X (${fileSizeMB.toFixed(1)}MB, max 5MB). Will work on LinkedIn only.`);
@@ -267,7 +267,8 @@ const SchedulePost: React.FC<SchedulePostProps> = ({ onSuccess }) => {
           content,
           scheduledAt: scheduledDateTime,
           platforms: selectedPlatforms,
-          mediaUrl: mediaUrl || undefined,
+          imageUrl: mediaUrl || undefined,
+          mediaType: mediaType,
           postType: postType
         })
       });
@@ -441,7 +442,7 @@ const SchedulePost: React.FC<SchedulePostProps> = ({ onSuccess }) => {
               <p className="text-xs text-gray-500">
                 {postType === 'reel' 
                   ? 'MP4, MOV - 9:16 vertical, 3-90s'
-                  : 'Images: PNG, JPG, GIF up to 10MB | Videos: MP4, MOV up to 512MB'
+                  : 'Images: PNG, JPG (10MB max) | Videos: MP4, MOV (512MB max)'
                 }
               </p>
             </div>

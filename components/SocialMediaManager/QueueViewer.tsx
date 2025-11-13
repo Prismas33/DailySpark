@@ -17,6 +17,7 @@ const QueueViewer: React.FC = () => {
   const [posts, setPosts] = useState<QueuedPost[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [expandedPostId, setExpandedPostId] = useState<string | null>(null);
 
   // Format date utility
   const formatDate = (dateValue: string | null | undefined, format: 'locale' | 'localedate' | 'localetime' = 'locale'): string => {
@@ -40,22 +41,29 @@ const QueueViewer: React.FC = () => {
   };
 
   // Load queue
-  const loadQueue = async () => {
+  const loadQueue = async (forceRefresh: boolean = false) => {
     setLoading(true);
     try {
-      // Try cache first
-      const cachedQueue = CacheService.get<QueuedPost[]>(CACHE_KEYS.SOCIAL_QUEUE);
-      if (cachedQueue) {
-        setPosts(cachedQueue);
-        setLoading(false);
-        return;
+      // Clear cache if force refresh
+      if (forceRefresh) {
+        CacheService.remove(CACHE_KEYS.SOCIAL_QUEUE);
+      }
+
+      // Try cache first (unless force refresh)
+      if (!forceRefresh) {
+        const cachedQueue = CacheService.get<QueuedPost[]>(CACHE_KEYS.SOCIAL_QUEUE);
+        if (cachedQueue) {
+          setPosts(cachedQueue);
+          setLoading(false);
+          return;
+        }
       }
 
       const response = await fetch('/api/social-media-queue');
       const data = await response.json();
       
       if (data.success) {
-        const queuedPosts = data.posts || [];
+        const queuedPosts = data.queue || [];
         setPosts(queuedPosts);
         // Cache for 20 minutes
         CacheService.set(CACHE_KEYS.SOCIAL_QUEUE, queuedPosts, 1200);
@@ -122,7 +130,7 @@ const QueueViewer: React.FC = () => {
           Scheduled Queue
         </h3>
         <button
-          onClick={loadQueue}
+          onClick={() => loadQueue(true)}
           disabled={loading}
           className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 text-white text-sm font-medium rounded-lg hover:from-emerald-600 hover:to-teal-600 disabled:opacity-50 flex items-center gap-2 transition-all transform hover:scale-105 shadow-lg"
         >
@@ -155,54 +163,125 @@ const QueueViewer: React.FC = () => {
           <p className="text-sm">Posts you schedule will appear here</p>
         </div>
       ) : (
-        <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
-          {posts.map((post) => (
-            <div key={post.id} className="bg-gray-800/50 rounded-xl border border-gray-700/50 p-5 hover:border-gray-600 transition-all">
-              <div className="flex justify-between items-start gap-4 mb-3">
-                <div className="flex-1">
-                  <div className="flex items-center flex-wrap gap-2 mb-3">
-                    <span className={`px-3 py-1 rounded-lg text-xs font-semibold border ${getStatusBadge(post.status)}`}>
-                      {post.status.toUpperCase()}
-                    </span>
-                    <span className="text-xs text-gray-400">
-                      📅 {formatDate(post.scheduledAt)}
-                    </span>
-                  </div>
-                  
-                  <p className="text-gray-200 text-sm mb-3 leading-relaxed">
-                    {post.content.length > 150 ? `${post.content.substring(0, 150)}...` : post.content}
-                  </p>
-                  
-                  <div className="flex flex-wrap gap-2 mb-2">
-                    {post.platforms.map((platform) => (
-                      <span key={platform} className="px-2 py-1 bg-gray-700/50 text-xs rounded-lg text-gray-300 font-medium flex items-center gap-1">
-                        <span>{getPlatformIcon(platform)}</span>
-                        {platform}
+        <div className="space-y-2 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
+          {posts.map((post) => {
+            const isExpanded = expandedPostId === post.id;
+            const preview = post.content.length > 100 ? `${post.content.substring(0, 100)}...` : post.content;
+
+            return (
+              <div 
+                key={post.id} 
+                className="bg-gray-800/50 rounded-lg border border-gray-700/50 overflow-hidden transition-all hover:border-emerald-500/50"
+              >
+                {/* Collapsed/Header View */}
+                <button
+                  onClick={() => setExpandedPostId(isExpanded ? null : post.id)}
+                  className="w-full text-left p-3 md:p-4 flex items-start gap-3 hover:bg-gray-700/30 transition-colors"
+                >
+                  {/* Image Thumbnail (Mobile) */}
+                  {post.imageUrl && (
+                    <img 
+                      src={post.imageUrl} 
+                      alt="Post image" 
+                      className="w-12 h-12 md:w-0 md:h-0 object-cover rounded-lg shadow-lg flex-shrink-0"
+                    />
+                  )}
+
+                  {/* Content Preview */}
+                  <div className="flex-1 min-w-0">
+                    {/* Status & Date */}
+                    <div className="flex items-center gap-2 mb-2 flex-wrap">
+                      <span className={`px-2 py-1 rounded text-xs font-semibold border ${getStatusBadge(post.status)}`}>
+                        {post.status.toUpperCase()}
                       </span>
-                    ))}
+                      <span className="text-xs text-gray-400 whitespace-nowrap">
+                        📅 {formatDate(post.scheduledAt, 'localedate')}
+                      </span>
+                    </div>
+
+                    {/* Content Preview */}
+                    <p className="text-gray-300 text-sm leading-relaxed truncate">
+                      {preview}
+                    </p>
+
+                    {/* Platform Badges */}
+                    <div className="flex gap-1 mt-2 flex-wrap">
+                      {post.platforms.map((platform) => (
+                        <span key={platform} className="px-2 py-0.5 bg-gray-700/50 text-xs rounded text-gray-300 font-medium">
+                          {getPlatformIcon(platform)} {platform}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                </div>
-                
-                {post.imageUrl && (
-                  <img 
-                    src={post.imageUrl} 
-                    alt="Post image" 
-                    className="w-20 h-20 object-cover rounded-lg shadow-lg"
-                  />
+
+                  {/* Expand Arrow */}
+                  <div className="text-gray-400 flex-shrink-0 text-lg mt-1">
+                    {isExpanded ? '▼' : '▶'}
+                  </div>
+                </button>
+
+                {/* Expanded Details */}
+                {isExpanded && (
+                  <div className="border-t border-gray-700/50 bg-gray-900/30 p-3 md:p-4 space-y-3">
+                    {/* Full Content */}
+                    <div>
+                      <p className="text-xs font-semibold text-gray-400 mb-2">📝 Full Content</p>
+                      <p className="text-gray-200 text-sm leading-relaxed whitespace-pre-wrap break-words">
+                        {post.content}
+                      </p>
+                    </div>
+
+                    {/* Full Image (if exists) */}
+                    {post.imageUrl && (
+                      <div>
+                        <p className="text-xs font-semibold text-gray-400 mb-2">🖼️ Image</p>
+                        <img 
+                          src={post.imageUrl} 
+                          alt="Post image" 
+                          className="w-full h-auto max-h-64 object-cover rounded-lg shadow-lg"
+                        />
+                      </div>
+                    )}
+
+                    {/* Scheduled Time */}
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div>
+                        <p className="text-gray-400 font-semibold mb-1">📅 Date & Time</p>
+                        <p className="text-gray-200">{formatDate(post.scheduledAt)}</p>
+                      </div>
+                      <div>
+                        <p className="text-gray-400 font-semibold mb-1">✏️ Created</p>
+                        <p className="text-gray-200">{formatDate(post.createdAt)}</p>
+                      </div>
+                    </div>
+
+                    {/* Platforms */}
+                    <div>
+                      <p className="text-xs font-semibold text-gray-400 mb-2">📱 Platforms</p>
+                      <div className="flex flex-wrap gap-2">
+                        {post.platforms.map((platform) => (
+                          <span key={platform} className="px-3 py-1 bg-emerald-500/20 text-emerald-300 text-xs rounded-lg border border-emerald-500/30 font-medium">
+                            {getPlatformIcon(platform)} {platform}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex gap-2 pt-3 border-t border-gray-700/50">
+                      <button
+                        onClick={() => deletePost(post.id)}
+                        className="flex-1 px-4 py-2 bg-red-500/20 text-red-300 text-xs font-medium rounded-lg hover:bg-red-500/30 border border-red-500/30 transition-all flex items-center justify-center gap-2"
+                      >
+                        <span>🗑️</span>
+                        Remove
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
-              
-              <div className="flex justify-end pt-3 border-t border-gray-700/50">
-                <button
-                  onClick={() => deletePost(post.id)}
-                  className="px-4 py-2 bg-red-500/20 text-red-300 text-xs font-medium rounded-lg hover:bg-red-500/30 border border-red-500/30 transition-all flex items-center gap-2"
-                >
-                  <span>🗑️</span>
-                  Remove
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
       
