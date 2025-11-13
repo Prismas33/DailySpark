@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { User } from 'firebase/auth';
 import { Sparkles, Calendar } from 'lucide-react';
 
@@ -9,6 +9,33 @@ interface WelcomeBannerProps {
 }
 
 export default function WelcomeBanner({ user }: WelcomeBannerProps) {
+  const [postsToday, setPostsToday] = useState(0);
+  const [scheduledPosts, setScheduledPosts] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  // Fetch counters
+  useEffect(() => {
+    const fetchCounters = async () => {
+      try {
+        // Fetch scheduled queue count
+        const queueResponse = await fetch('/api/social-media-queue?status=scheduled');
+        const queueData = await queueResponse.json();
+        if (queueData.success) {
+          setScheduledPosts(queueData.count || 0);
+        }
+
+        // TODO: Fetch posts sent today from backend
+        // For now, we'll set it to 0 as this requires logging posts sent
+        setPostsToday(0);
+      } catch (error) {
+        console.error('Error fetching counters:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchCounters();
+  }, []);
   // Get greeting based on time of day
   const getGreeting = (): string => {
     const hour = new Date().getHours();
@@ -95,11 +122,11 @@ export default function WelcomeBanner({ user }: WelcomeBannerProps) {
           {/* Stats */}
           <div className="flex gap-4 md:gap-6">
             <div className="text-center">
-              <div className="text-xl md:text-3xl font-bold text-emerald-400">0</div>
+              <div className="text-xl md:text-3xl font-bold text-emerald-400">{loading ? '—' : postsToday}</div>
               <div className="text-[10px] md:text-xs text-gray-500">Posts Today</div>
             </div>
             <div className="text-center">
-              <div className="text-xl md:text-3xl font-bold text-teal-400">0</div>
+              <div className="text-xl md:text-3xl font-bold text-teal-400">{loading ? '—' : scheduledPosts}</div>
               <div className="text-[10px] md:text-xs text-gray-500">Scheduled</div>
             </div>
           </div>
