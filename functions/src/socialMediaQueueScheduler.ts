@@ -84,36 +84,46 @@ export async function processSocialMediaQueue(): Promise<void> {
         };
         
         // Post to selected platforms
+        console.log(`[SocialQueue] 🚀 Starting to send post: "${post.content.substring(0, 50)}..."`);
         console.log(`[SocialQueue] Posting to: ${post.platforms.join(', ')}`);
         console.log(`[SocialQueue] Media URL: ${post.mediaUrl || 'none'}`);
         console.log(`[SocialQueue] Post Type: ${post.postType || 'post'}, Media Type: ${post.mediaType || 'none'}`);
         
         if (post.platforms.includes('linkedin')) {
-          results.linkedin = await postToLinkedIn(jobForSend);
-        }
-        if (post.platforms.includes('x')) {
-          results.x = await postToX(jobForSend);
-        }
-        
-        // Clean up media from Firebase Storage after successful post
-        if (post.mediaUrl && post.mediaUrl.includes('firebasestorage.googleapis.com')) {
           try {
-            const storage = getStorage();
-            const mediaPath = extractStoragePathFromUrl(post.mediaUrl);
-            
-            if (mediaPath) {
-              await storage.bucket().file(mediaPath).delete();
-              console.log(`[SocialQueue] ✅ Cleaned up media from Storage: ${mediaPath}`);
-            } else {
-              console.warn(`[SocialQueue] ⚠️ Could not extract storage path from URL: ${post.mediaUrl}`);
-            }
-          } catch (cleanupError: any) {
-            // Don't fail the whole process if cleanup fails
-            console.warn(`[SocialQueue] ⚠️ Failed to clean up media:`, cleanupError.message);
+            results.linkedin = await postToLinkedIn(jobForSend);
+            console.log(`[SocialQueue] LinkedIn result: ${results.linkedin ? '✅ SUCCESS' : '❌ FAILED'}`);
+          } catch (linkedinError: any) {
+            console.error(`[SocialQueue] LinkedIn error:`, linkedinError.message);
+            results.linkedin = false;
           }
         }
         
-        // Log success
+        if (post.platforms.includes('x')) {
+          try {
+            results.x = await postToX(jobForSend);
+            console.log(`[SocialQueue] X result: ${results.x ? '✅ SUCCESS' : '❌ FAILED'}`);
+          } catch (xError: any) {
+            console.error(`[SocialQueue] X error:`, xError.message);
+            results.x = false;
+          }
+        }
+        
+        // Check if at least one platform succeeded
+        const hasSuccess = results.linkedin || results.x;
+        const failedPlatforms = post.platforms.filter(p => 
+          (p === 'linkedin' && !results.linkedin) || 
+          (p === 'x' && !results.x)
+        );
+        
+        console.log(`[SocialQueue] 📊 Results: LinkedIn=${results.linkedin}, X=${results.x}`);
+        
+        if (!hasSuccess && post.platforms.length > 0) {
+          throw new Error(`Failed to post to ANY platform. Failed: ${failedPlatforms.join(', ')}`);
+        }
+        
+        // Log success BEFORE cleanup
+        console.log(`[SocialQueue] 📝 Logging activity...`);
         await logSystemActivity(
           "system",
           "SocialMediaQueueScheduler",
@@ -126,17 +136,39 @@ export async function processSocialMediaQueue(): Promise<void> {
             status: "success"
           }
         );
+        console.log(`[SocialQueue] ✅ Activity logged`);
         
-        // Delete post from queue immediately after successful send
+        // Clean up media from Firebase Storage ONLY after successful post
+        if (post.mediaUrl && post.mediaUrl.includes('firebasestorage.googleapis.com')) {
+          try {
+            console.log(`[SocialQueue] 🧹 Cleaning up media...`);
+            const storage = getStorage();
+            const mediaPath = extractStoragePathFromUrl(post.mediaUrl);
+            
+            if (mediaPath) {
+              await storage.bucket().file(mediaPath).delete();
+              console.log(`[SocialQueue] ✅ Media deleted: ${mediaPath}`);
+            } else {
+              console.warn(`[SocialQueue] ⚠️ Could not extract storage path from URL: ${post.mediaUrl}`);
+            }
+          } catch (cleanupError: any) {
+            // Don't fail the whole process if cleanup fails
+            console.warn(`[SocialQueue] ⚠️ Failed to clean up media:`, cleanupError.message);
+          }
+        }
+        
+        // Delete post from queue ONLY after successful send AND logging
+        console.log(`[SocialQueue] 🗑️ Deleting post from queue...`);
         await postDoc.ref.delete();
+        console.log(`[SocialQueue] ✅ Post deleted from queue`);
         
-        console.log(`[SocialQueue] ✅ Post sent successfully and removed from queue`);
-        console.log(`[SocialQueue] Results: LinkedIn=${results.linkedin}, X=${results.x}`);
+        console.log(`[SocialQueue] 🎉 COMPLETE - Post sent and removed successfully`);
         
       } catch (postError: any) {
-        console.error(`[SocialQueue] ❌ Error sending post ${post.id}:`, postError.message);
+        console.error(`[SocialQueue] ❌ ERROR processing post ${post.id}:`, postError.message);
+        console.error(`[SocialQueue] Stack:`, postError.stack);
         
-        // Log error before deleting
+        // Log error
         await logSystemActivity(
           "system",
           "SocialMediaQueueScheduler",
@@ -144,15 +176,14 @@ export async function processSocialMediaQueue(): Promise<void> {
             postId: post.id,
             content: post.content.substring(0, 100),
             error: postError.message,
+            errorStack: postError.stack?.substring(0, 200),
             timestamp: new Date().toISOString(),
             status: "post_failed"
           }
         );
         
-        // Delete failed post from queue immediately (keeps queue clean)
-        await postDoc.ref.delete();
-        
-        console.log(`[SocialQueue] ❌ Failed post removed from queue: ${postError.message}`);
+        // DO NOT delete failed post - keep it in queue for manual retry
+        console.warn(`[SocialQueue] ⚠️ Post NOT deleted - keeping in queue for manual review/retry`);
       }
     }
     
