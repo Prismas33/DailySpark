@@ -8,7 +8,7 @@
     "url": "https://github.com/prismas33/DailySpark.git"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": "22.x"
   },
   "scripts": {
     "dev": "next dev",
