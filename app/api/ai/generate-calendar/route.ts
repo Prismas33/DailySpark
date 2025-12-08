@@ -48,27 +48,85 @@ export async function POST(req: NextRequest) {
       }, { status: 500 });
     }
 
-    // Calculate week dates
+    // Find the next available week that doesn't have a calendar yet
     const now = new Date();
-    const startDate = weekStart ? new Date(weekStart) : getNextMonday(now);
+    let startDate: Date;
+    
+    if (weekStart) {
+      // If specific week is requested, use that
+      startDate = new Date(weekStart);
+    } else {
+      // Find existing calendars for this user to determine the next available week
+      let existingCalendars;
+      try {
+        existingCalendars = await adminDb.collection('calendars')
+          .where('userId', '==', uid)
+          .orderBy('weekStart', 'desc')
+          .limit(20)
+          .get();
+      } catch (queryError: any) {
+        // If index doesn't exist, try simple query
+        console.warn('Calendar query failed, trying simple query:', queryError.message);
+        existingCalendars = await adminDb.collection('calendars')
+          .where('userId', '==', uid)
+          .limit(20)
+          .get();
+      }
+      
+      const existingWeekStarts = new Set(
+        existingCalendars.docs.map(doc => {
+          const data = doc.data();
+          // Normalize to just the date part (YYYY-MM-DD)
+          return new Date(data.weekStart).toISOString().split('T')[0];
+        })
+      );
+      
+      console.log('📆 Existing calendars found:', existingWeekStarts.size);
+      console.log('📆 Existing weeks:', Array.from(existingWeekStarts));
+      
+      // Start from the current week's Monday
+      startDate = getNextMonday(now);
+      
+      // Keep advancing by 7 days until we find a week without a calendar
+      let attempts = 0;
+      const maxAttempts = 52; // Don't look more than a year ahead
+      
+      while (attempts < maxAttempts) {
+        const weekKey = startDate.toISOString().split('T')[0];
+        if (!existingWeekStarts.has(weekKey)) {
+          console.log('📆 Found available week:', weekKey);
+          break;
+        }
+        console.log('📆 Week already exists:', weekKey, '- checking next week');
+        startDate.setDate(startDate.getDate() + 7);
+        attempts++;
+      }
+      
+      if (attempts >= maxAttempts) {
+        return NextResponse.json({ 
+          error: 'Could not find an available week in the next year. Please delete some calendars first.' 
+        }, { status: 400 });
+      }
+    }
+    
     const endDate = new Date(startDate);
     endDate.setDate(endDate.getDate() + 6);
 
-    // User has FULL control - only add minimal JSON formatting instruction
+    // User prompt - just add week info and ask for JSON format
     const userMessage = `${calendarPrompt}
 
 Week: ${startDate.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} to ${endDate.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
 
-IMPORTANT: Return your response as a valid JSON object with this structure:
+Return as JSON with this structure (put ALL your content including Title, Message, CTA, Hashtags, Suggested Visual inside the "content" field as formatted text):
 {
   "days": [
-    {"day": "monday", "topic": "...", "content": "...", "hashtags": ["...", "..."]},
-    {"day": "tuesday", "topic": "...", "content": "...", "hashtags": ["...", "..."]},
-    {"day": "wednesday", "topic": "...", "content": "...", "hashtags": ["...", "..."]},
-    {"day": "thursday", "topic": "...", "content": "...", "hashtags": ["...", "..."]},
-    {"day": "friday", "topic": "...", "content": "...", "hashtags": ["...", "..."]},
-    {"day": "saturday", "topic": "...", "content": "...", "hashtags": ["...", "..."]},
-    {"day": "sunday", "topic": "...", "content": "...", "hashtags": ["...", "..."]}
+    {"day": "monday", "topic": "short topic name", "content": "Title: ...\\nMessage: ...\\nCTA: ...\\nHashtags: #tag1 #tag2\\nSuggested visual: ..."},
+    {"day": "tuesday", "topic": "short topic name", "content": "Title: ...\\nMessage: ...\\nCTA: ...\\nHashtags: #tag1 #tag2\\nSuggested visual: ..."},
+    {"day": "wednesday", "topic": "short topic name", "content": "..."},
+    {"day": "thursday", "topic": "short topic name", "content": "..."},
+    {"day": "friday", "topic": "short topic name", "content": "..."},
+    {"day": "saturday", "topic": "short topic name", "content": "..."},
+    {"day": "sunday", "topic": "short topic name", "content": "..."}
   ]
 }`;
 
@@ -82,7 +140,7 @@ IMPORTANT: Return your response as a valid JSON object with this structure:
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4o',
         messages: [
           { role: 'user', content: userMessage }
         ],
@@ -142,14 +200,98 @@ IMPORTANT: Return your response as a valid JSON object with this structure:
       }, { status: 500 });
     }
 
+    // Convert content to string - handle case where model returns object instead of string
+    const contentToString = (content: any): string => {
+      if (!content) return '';
+      if (typeof content === 'string') return content;
+      
+      // If content is an object (model returned structured data), convert to readable text
+      if (typeof content === 'object') {
+        const parts: string[] = [];
+        if (content.title) parts.push(`Title: ${content.title}`);
+        if (content.message) parts.push(`Message: ${content.message}`);
+        if (content.CTA) parts.push(`CTA: ${content.CTA}`);
+        if (content.suggestedVisual) parts.push(`Suggested visual: ${content.suggestedVisual}`);
+        if (content.hashtags) {
+          // Handle hashtags in content object
+          if (Array.isArray(content.hashtags)) {
+            parts.push(content.hashtags.map((h: string) => h.startsWith('#') ? h : `#${h}`).join(' '));
+          } else if (typeof content.hashtags === 'string') {
+            parts.push(content.hashtags);
+          }
+        }
+        return parts.join('\n');
+      }
+      
+      return String(content);
+    };
+
+    // Extract hashtags from content and clean the text
+    const extractHashtagsFromContent = (rawContent: any): { cleanContent: string; hashtags: string[] } => {
+      const content = contentToString(rawContent);
+      if (!content) return { cleanContent: 'Content not generated', hashtags: [] };
+      
+      const lines = content.split('\n');
+      const hashtags: string[] = [];
+      const cleanedLines: string[] = [];
+      
+      for (const line of lines) {
+        const trimmedLine = line.trim();
+        
+        // Check if this is a "Hashtags:" line
+        if (/^hashtags?\s*:/i.test(trimmedLine)) {
+          const hashtagMatches = trimmedLine.match(/#(\w+)/g);
+          if (hashtagMatches) {
+            hashtagMatches.forEach(tag => {
+              const cleanTag = tag.replace('#', '');
+              if (cleanTag && !hashtags.includes(cleanTag)) {
+                hashtags.push(cleanTag);
+              }
+            });
+          }
+          continue; // Skip this line in content
+        }
+        
+        // Check if line is just hashtags (starts with # and mostly hashtags)
+        if (trimmedLine.startsWith('#')) {
+          const hashtagMatches = trimmedLine.match(/#(\w+)/g);
+          if (hashtagMatches) {
+            const words = trimmedLine.split(/\s+/);
+            const hashtagWords = words.filter(w => w.startsWith('#'));
+            
+            if (hashtagWords.length >= words.length * 0.5) {
+              hashtagMatches.forEach(tag => {
+                const cleanTag = tag.replace('#', '');
+                if (cleanTag && !hashtags.includes(cleanTag)) {
+                  hashtags.push(cleanTag);
+                }
+              });
+              continue; // Skip this line in content
+            }
+          }
+        }
+        
+        cleanedLines.push(line);
+      }
+      
+      return {
+        cleanContent: cleanedLines.join('\n').trim(),
+        hashtags
+      };
+    };
+
     // Validate and normalize the calendar data
     const days = DAYS_OF_WEEK.map(dayName => {
       const dayData = calendarData.days?.find((d: any) => d.day?.toLowerCase() === dayName);
+      
+      // Extract hashtags from content
+      const { cleanContent, hashtags } = extractHashtagsFromContent(dayData?.content);
+      
       return {
         day: dayName,
         topic: dayData?.topic || 'No topic',
-        content: dayData?.content || 'Content not generated',
-        hashtags: Array.isArray(dayData?.hashtags) ? dayData.hashtags : [],
+        content: cleanContent,
+        hashtags,
         status: 'pending' as const
       };
     });

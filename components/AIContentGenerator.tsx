@@ -22,7 +22,7 @@ export default function AIContentGenerator({
   const [error, setError] = useState<string | null>(null);
   const [showComparison, setShowComparison] = useState(false);
   const [currentPrompt, setCurrentPrompt] = useState<string>(initialPrompt);
-  const [aiModel, setAiModel] = useState<'gpt-4o-mini' | 'gpt-4o'>('gpt-4o-mini');
+  const aiModel = 'gpt-4o'; // Fixed to GPT-4o for best quality
 
   // Always load the freshest prompt from cache when modal opens
   useEffect(() => {
@@ -214,53 +214,20 @@ export default function AIContentGenerator({
               )}
             </div>
             
-            {/* Model Switch */}
+            {/* Model Info */}
             <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-400">Model:</span>
-              <div className="flex bg-gray-800 rounded-lg p-1">
-                <button
-                  onClick={() => setAiModel('gpt-4o-mini')}
-                  className={`px-3 py-1 text-xs font-medium rounded transition-all ${
-                    aiModel === 'gpt-4o-mini'
-                      ? 'bg-blue-500 text-white'
-                      : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  <span className="flex items-center gap-1">
-                    ⚡ Mini
-                    <span className="text-[10px] opacity-70">(fast)</span>
-                  </span>
-                </button>
-                <button
-                  onClick={() => setAiModel('gpt-4o')}
-                  className={`px-3 py-1 text-xs font-medium rounded transition-all ${
-                    aiModel === 'gpt-4o'
-                      ? 'bg-purple-500 text-white'
-                      : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  <span className="flex items-center gap-1">
-                    🧠 GPT-4o
-                    <span className="text-[10px] opacity-70">(advanced)</span>
-                  </span>
-                </button>
-              </div>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/30 text-xs font-medium">
+                🧠 GPT-4o
+              </span>
             </div>
           </div>
           
-          {/* Model Info */}
+          {/* Cost Info */}
           <div className="mt-2 px-3 py-2 bg-gray-800/50 rounded-lg border border-gray-700/50">
-            {aiModel === 'gpt-4o-mini' ? (
-              <p className="text-xs text-gray-400">
-                💡 <span className="text-blue-400 font-medium">GPT-4o-mini</span>: Best for quick posts, random ideas, and generic content. 
-                <span className="text-emerald-400"> (~€0.0004/post)</span>
-              </p>
-            ) : (
-              <p className="text-xs text-gray-400">
-                🚀 <span className="text-purple-400 font-medium">GPT-4o</span>: Best for personal storytelling, deep analysis, and creative content. 
-                <span className="text-orange-400"> (~€0.019/post)</span>
-              </p>
-            )}
+            <p className="text-xs text-gray-400">
+              🚀 <span className="text-purple-400 font-medium">GPT-4o</span>: Best for personal storytelling, deep analysis, and creative content. 
+              <span className="text-orange-400"> (~€0.019/post)</span>
+            </p>
           </div>
         </div>
 

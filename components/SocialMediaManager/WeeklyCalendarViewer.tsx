@@ -10,11 +10,13 @@ import {
   Copy,
   Send,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  Plus
 } from 'lucide-react';
 import { auth } from '@/lib/firebase';
 import { WeeklyCalendar, CalendarDay } from '@/types/user';
 import { CacheService, CACHE_TTL } from '@/lib/cacheService';
+import { useIsMobile } from '@/hooks/useIsMobile';
 
 const CACHE_KEY = 'weekly_calendars';
 
@@ -53,6 +55,7 @@ export default function WeeklyCalendarViewer({ onUseContent }: WeeklyCalendarVie
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const isMobile = useIsMobile();
 
   const getAuthToken = useCallback(async () => {
     const user = auth.currentUser;
@@ -140,7 +143,24 @@ export default function WeeklyCalendarViewer({ onUseContent }: WeeklyCalendarVie
         throw new Error(data.error || 'Failed to generate calendar');
       }
 
-      const newCalendars = [data.calendar, ...calendars];
+      console.log('✅ New calendar generated:', data.calendar.id);
+      console.log('📆 Week:', data.calendar.weekStart, '-', data.calendar.weekEnd);
+      
+      // Check if this calendar already exists in the list (by ID)
+      const existingIndex = calendars.findIndex(c => c.id === data.calendar.id);
+      let newCalendars: WeeklyCalendar[];
+      
+      if (existingIndex >= 0) {
+        // Replace existing calendar
+        newCalendars = [...calendars];
+        newCalendars[existingIndex] = data.calendar;
+        console.log('📆 Replaced existing calendar at index:', existingIndex);
+      } else {
+        // Add new calendar at the beginning
+        newCalendars = [data.calendar, ...calendars];
+        console.log('📆 Added new calendar, total:', newCalendars.length);
+      }
+      
       setCalendars(newCalendars);
       CacheService.set(CACHE_KEY, newCalendars, CACHE_TTL.MEDIUM);
       
@@ -200,17 +220,28 @@ export default function WeeklyCalendarViewer({ onUseContent }: WeeklyCalendarVie
   const deleteCalendar = async (calendarId: string) => {
     if (!confirm('Are you sure you want to delete this calendar?')) return;
 
+    console.log('🗑️ Deleting calendar:', calendarId);
+    
     try {
       const token = await getAuthToken();
       
-      const response = await fetch(`/api/calendar?id=${calendarId}`, {
+      const response = await fetch(`/api/calendar?id=${encodeURIComponent(calendarId)}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
 
-      if (!response.ok) throw new Error('Failed to delete');
+      const data = await response.json();
+      
+      if (!response.ok) {
+        console.error('Delete failed:', data);
+        throw new Error(data.error || 'Failed to delete');
+      }
 
+      console.log('✅ Calendar deleted successfully:', calendarId);
+      
       const updatedCalendars = calendars.filter(c => c.id !== calendarId);
+      console.log('📆 Remaining calendars:', updatedCalendars.length, updatedCalendars.map(c => c.id));
+      
       setCalendars(updatedCalendars);
       CacheService.set(CACHE_KEY, updatedCalendars, CACHE_TTL.MEDIUM);
       
@@ -222,6 +253,7 @@ export default function WeeklyCalendarViewer({ onUseContent }: WeeklyCalendarVie
       setSuccessMessage('Calendar deleted');
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (err: any) {
+      console.error('Delete calendar error:', err);
       setError(err.message);
     }
   };
@@ -271,14 +303,18 @@ export default function WeeklyCalendarViewer({ onUseContent }: WeeklyCalendarVie
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <Calendar className="w-5 h-5 text-purple-400" />
-          <h3 className="text-lg font-bold text-white">Weekly Calendar</h3>
+          <h3 className={`font-bold text-white ${isMobile ? 'text-base' : 'text-lg'}`}>
+            {isMobile ? 'Weekly Calendar' : 'Weekly Calendar'}
+          </h3>
         </div>
         
         <div className="flex items-center gap-2">
           <button
             onClick={() => loadCalendars(true)}
             disabled={loading}
-            className="flex items-center gap-1 px-3 py-2 bg-gray-700/50 hover:bg-gray-700 text-gray-300 rounded-lg text-sm transition-all disabled:opacity-50"
+            className={`flex items-center justify-center bg-gray-700/50 hover:bg-gray-700 text-gray-300 rounded-lg transition-all disabled:opacity-50 ${
+              isMobile ? 'p-2' : 'gap-1 px-3 py-2'
+            }`}
             title="Reload"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -287,17 +323,20 @@ export default function WeeklyCalendarViewer({ onUseContent }: WeeklyCalendarVie
           <button
             onClick={generateCalendar}
             disabled={generating}
-            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white rounded-lg text-sm font-medium transition-all disabled:opacity-50"
+            className={`flex items-center justify-center bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white rounded-lg font-medium transition-all disabled:opacity-50 ${
+              isMobile ? 'p-2' : 'gap-2 px-4 py-2 text-sm'
+            }`}
+            title="Generate New Week"
           >
             {generating ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                Generating...
+                {!isMobile && 'Generating...'}
               </>
             ) : (
               <>
-                <Sparkles className="w-4 h-4" />
-                Generate New Week
+                {isMobile ? <Plus className="w-4 h-4" /> : <Sparkles className="w-4 h-4" />}
+                {!isMobile && 'Generate New Week'}
               </>
             )}
           </button>
@@ -412,7 +451,7 @@ export default function WeeklyCalendarViewer({ onUseContent }: WeeklyCalendarVie
                           } ${isSelected ? 'ring-2 ring-purple-500' : ''}`}
                         >
                           <p className="text-white text-[10px] font-medium truncate leading-tight">{day.topic}</p>
-                          <p className="text-gray-400 text-[9px] mt-0.5 line-clamp-2 leading-tight">{day.content.substring(0, 40)}...</p>
+                          <p className="text-gray-400 text-[9px] mt-0.5 line-clamp-2 leading-tight">{String(day.content || '').substring(0, 40)}...</p>
                         </button>
                       );
                     })}

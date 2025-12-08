@@ -5,6 +5,7 @@ import { Calendar, ChevronDown, RefreshCw, Sparkles, X } from 'lucide-react';
 import { auth } from '@/lib/firebase';
 import { WeeklyCalendar, CalendarDay } from '@/types/user';
 import { CacheService, CACHE_TTL } from '@/lib/cacheService';
+import { useIsMobile } from '@/hooks/useIsMobile';
 
 const CACHE_KEY = 'weekly_calendars';
 
@@ -29,6 +30,7 @@ export default function CalendarImport({ onImport }: CalendarImportProps) {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentWeekCalendar, setCurrentWeekCalendar] = useState<WeeklyCalendar | null>(null);
+  const isMobile = useIsMobile();
 
   const getAuthToken = async () => {
     const user = auth.currentUser;
@@ -120,7 +122,19 @@ export default function CalendarImport({ onImport }: CalendarImportProps) {
         throw new Error(data.error || 'Failed to generate calendar');
       }
 
-      const newCalendars = [data.calendar, ...calendars];
+      // Check if this calendar already exists in the list (by ID)
+      const existingIndex = calendars.findIndex(c => c.id === data.calendar.id);
+      let newCalendars: WeeklyCalendar[];
+      
+      if (existingIndex >= 0) {
+        // Replace existing calendar
+        newCalendars = [...calendars];
+        newCalendars[existingIndex] = data.calendar;
+      } else {
+        // Add new calendar at the beginning
+        newCalendars = [data.calendar, ...calendars];
+      }
+      
       setCalendars(newCalendars);
       CacheService.set(CACHE_KEY, newCalendars, CACHE_TTL.MEDIUM);
       setCurrentWeekCalendar(data.calendar);
@@ -150,99 +164,114 @@ export default function CalendarImport({ onImport }: CalendarImportProps) {
   const availableDays = currentWeekCalendar?.days.filter(d => d.status !== 'discarded') || [];
 
   return (
-    <div className="relative">
+    <>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-3 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/30 text-purple-300 rounded-lg text-xs font-medium transition-all"
+        title="Import from Calendar"
+        className={`flex items-center bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/30 text-purple-300 rounded-lg font-medium transition-all ${isMobile ? 'p-1.5' : 'gap-2 px-3 py-1.5 text-xs'}`}
       >
         <Calendar className="w-3.5 h-3.5" />
-        Import from Calendar
-        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        {!isMobile && (
+          <>
+            Import from Calendar
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+          </>
+        )}
       </button>
 
+      {/* Modal Overlay */}
       {isOpen && (
-        <div className="absolute top-full left-0 mt-2 w-80 bg-gray-800 border border-gray-700 rounded-xl shadow-xl z-50 overflow-hidden">
-          {/* Header */}
-          <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
-            <span className="text-sm font-medium text-white">This Week's Calendar</span>
-            <button onClick={() => setIsOpen(false)} className="text-gray-400 hover:text-white">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+        <div 
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setIsOpen(false)}
+        >
+          {/* Modal Content */}
+          <div 
+            className="w-full max-w-sm bg-gray-800 border border-gray-700 rounded-xl shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+              <span className="text-sm font-medium text-white">This Week's Calendar</span>
+              <button onClick={() => setIsOpen(false)} className="text-gray-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
-          {/* Content */}
-          <div className="p-3 max-h-80 overflow-y-auto">
-            {loading && (
-              <div className="flex items-center justify-center py-8">
-                <RefreshCw className="w-6 h-6 text-purple-400 animate-spin" />
-              </div>
-            )}
+            {/* Content */}
+            <div className="p-3 max-h-[60vh] overflow-y-auto">
+              {loading && (
+                <div className="flex items-center justify-center py-8">
+                  <RefreshCw className="w-6 h-6 text-purple-400 animate-spin" />
+                </div>
+              )}
 
-            {error && (
-              <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-xs mb-3">
-                {error}
-              </div>
-            )}
+              {error && (
+                <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-xs mb-3">
+                  {error}
+                </div>
+              )}
 
-            {/* No calendar for this week */}
-            {!loading && !currentWeekCalendar && (
-              <div className="text-center py-6">
-                <Calendar className="w-10 h-10 text-gray-600 mx-auto mb-3" />
-                <p className="text-gray-400 text-sm mb-3">No calendar for this week</p>
-                <button
-                  onClick={generateCalendar}
-                  disabled={generating}
-                  className="flex items-center gap-2 mx-auto px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white rounded-lg text-sm font-medium transition-all disabled:opacity-50"
-                >
-                  {generating ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      Generating...
-                    </>
+              {/* No calendar for this week */}
+              {!loading && !currentWeekCalendar && (
+                <div className="text-center py-6">
+                  <Calendar className="w-10 h-10 text-gray-600 mx-auto mb-3" />
+                  <p className="text-gray-400 text-sm mb-3">No calendar for this week</p>
+                  <button
+                    onClick={generateCalendar}
+                    disabled={generating}
+                    className="flex items-center gap-2 mx-auto px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white rounded-lg text-sm font-medium transition-all disabled:opacity-50"
+                  >
+                    {generating ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4" />
+                        Generate Now
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+
+              {/* Calendar days list */}
+              {!loading && currentWeekCalendar && (
+                <div className="space-y-2">
+                  {availableDays.length === 0 ? (
+                    <p className="text-gray-400 text-sm text-center py-4">All days have been discarded</p>
                   ) : (
-                    <>
-                      <Sparkles className="w-4 h-4" />
-                      Generate Now
-                    </>
+                    availableDays.map((day) => (
+                      <button
+                        key={day.day}
+                        onClick={() => handleImportDay(day)}
+                        className={`w-full text-left p-3 rounded-lg border transition-all ${
+                          day.day === todayKey
+                            ? 'bg-purple-500/20 border-purple-500/50 hover:bg-purple-500/30'
+                            : 'bg-gray-700/30 border-gray-600/50 hover:bg-gray-700/50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className={`text-sm font-medium ${day.day === todayKey ? 'text-purple-300' : 'text-white'}`}>
+                            {DAY_NAMES[day.day]}
+                            {day.day === todayKey && (
+                              <span className="ml-2 px-1.5 py-0.5 bg-purple-500 text-white text-[10px] rounded">TODAY</span>
+                            )}
+                          </span>
+                          <span className="text-xs text-gray-400">{day.topic}</span>
+                        </div>
+                        <p className="text-xs text-gray-400 line-clamp-2">{day.content}</p>
+                      </button>
+                    ))
                   )}
-                </button>
-              </div>
-            )}
-
-            {/* Calendar days list */}
-            {!loading && currentWeekCalendar && (
-              <div className="space-y-2">
-                {availableDays.length === 0 ? (
-                  <p className="text-gray-400 text-sm text-center py-4">All days have been discarded</p>
-                ) : (
-                  availableDays.map((day) => (
-                    <button
-                      key={day.day}
-                      onClick={() => handleImportDay(day)}
-                      className={`w-full text-left p-3 rounded-lg border transition-all ${
-                        day.day === todayKey
-                          ? 'bg-purple-500/20 border-purple-500/50 hover:bg-purple-500/30'
-                          : 'bg-gray-700/30 border-gray-600/50 hover:bg-gray-700/50'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className={`text-sm font-medium ${day.day === todayKey ? 'text-purple-300' : 'text-white'}`}>
-                          {DAY_NAMES[day.day]}
-                          {day.day === todayKey && (
-                            <span className="ml-2 px-1.5 py-0.5 bg-purple-500 text-white text-[10px] rounded">TODAY</span>
-                          )}
-                        </span>
-                        <span className="text-xs text-gray-400">{day.topic}</span>
-                      </div>
-                      <p className="text-xs text-gray-400 line-clamp-2">{day.content}</p>
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

@@ -80,19 +80,20 @@ const SocialMediaManager: React.FC<SocialMediaManagerProps> = ({ user, onLogout 
             </div>
             
             {/* Row 2 (mobile) / Middle (desktop): Navigation Buttons */}
-            <div className="flex items-center gap-2 justify-center md:flex-1">
+            <div className="flex items-center gap-1 sm:gap-2 justify-center md:flex-1 overflow-x-auto">
               {tabs.filter(tab => tab.id !== 'settings').map((tab) => (
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-1.5 py-2 px-3 rounded-lg font-medium transition-all text-sm flex-1 md:flex-none justify-center ${
+                  title={tab.label}
+                  className={`flex items-center gap-1.5 py-2 px-2 sm:px-3 rounded-lg font-medium transition-all text-sm flex-shrink-0 justify-center ${
                     activeTab === tab.id
                       ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/20'
                       : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
                   }`}
                 >
                   <span className="text-base md:text-lg">{tab.icon}</span>
-                  <span className="text-xs md:text-sm">{tab.label}</span>
+                  <span className="text-xs md:text-sm hidden sm:inline">{tab.label}</span>
                 </button>
               ))}
             </div>

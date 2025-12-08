@@ -6,6 +6,7 @@ import AIContentGenerator from '@/components/AIContentGenerator';
 import ImageGeneratorModal from '@/components/ImageGeneratorModal';
 import CalendarImport from './CalendarImport';
 import { CacheService, CACHE_KEYS } from '@/lib/cacheService';
+import { useIsMobile } from '@/hooks/useIsMobile';
 
 type Platform = 'linkedin' | 'x' | 'facebook' | 'instagram';
 
@@ -31,6 +32,7 @@ const SchedulePost: React.FC<SchedulePostProps> = ({ onSuccess }) => {
   const [aiPrompt, setAiPrompt] = useState<string>('');
   const [visualSuggestion, setVisualSuggestion] = useState<string>('');
   const [showImageGen, setShowImageGen] = useState(false);
+  const isMobile = useIsMobile();
 
   // Load AI prompt from cache/settings
   useEffect(() => {
@@ -325,15 +327,16 @@ const SchedulePost: React.FC<SchedulePostProps> = ({ onSuccess }) => {
       <div className="mb-4">
         <div className="flex items-center justify-between mb-3">
           <label className="block text-sm font-medium text-gray-300">Content</label>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2">
             <CalendarImport onImport={(text) => setContent(text)} />
             {content.trim() && (
               <button
                 onClick={() => setShowAI(true)}
-                className="text-xs px-2 py-1 bg-gradient-to-r from-emerald-500/20 to-teal-500/20 hover:from-emerald-500/30 hover:to-teal-500/30 border border-emerald-500/30 text-emerald-300 rounded-md flex items-center gap-1 transition-all"
+                title="Improve with AI"
+                className={`bg-gradient-to-r from-emerald-500/20 to-teal-500/20 hover:from-emerald-500/30 hover:to-teal-500/30 border border-emerald-500/30 text-emerald-300 rounded-md flex items-center gap-1 transition-all ${isMobile ? 'p-1.5' : 'text-xs px-2 py-1'}`}
               >
-                <Sparkles className="w-3 h-3" />
-                Improve with AI
+                <Sparkles className="w-3.5 h-3.5" />
+                {!isMobile && 'Improve with AI'}
               </button>
             )}
           </div>
