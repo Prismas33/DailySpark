@@ -147,6 +147,24 @@ export default function AIContentGenerator({
         console.log('⚠️ No visual suggestion pattern found');
       }
 
+      // Clean up "Suggested" label that appears alone before hashtags
+      // Pattern: "Suggested\n#hashtag" -> just "#hashtag"
+      cleanContent = cleanContent
+        .replace(/\n?Suggested\s*\n(#)/gi, '\n\n$1')
+        .replace(/\n?Sugerido\s*\n(#)/gi, '\n\n$1')
+        .replace(/\n?Hashtags sugeridas?\s*[:\-]?\s*\n?(#)/gi, '\n\n$1')
+        .replace(/\n?Suggested hashtags?\s*[:\-]?\s*\n?(#)/gi, '\n\n$1')
+        .trim();
+
+      // IMPORTANT: Preserve the original line breaks from AI response
+      // Don't modify the spacing - keep it as the AI generated it
+      // Only normalize excessive line breaks (3+ becomes 2)
+      cleanContent = cleanContent
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+      console.log('📝 Final content preview:', cleanContent.substring(0, 200));
+
       onAcceptSuggestion(cleanContent, visualSuggestion);
       onClose();
     }

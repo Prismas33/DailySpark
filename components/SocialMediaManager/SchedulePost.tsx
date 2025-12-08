@@ -3,6 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { Calendar, Clock, Send, Image, X, Sparkles } from 'lucide-react';
 import AIContentGenerator from '@/components/AIContentGenerator';
+import ImageGeneratorModal from '@/components/ImageGeneratorModal';
+import CalendarImport from './CalendarImport';
 import { CacheService, CACHE_KEYS } from '@/lib/cacheService';
 
 type Platform = 'linkedin' | 'x' | 'facebook' | 'instagram';
@@ -27,6 +29,8 @@ const SchedulePost: React.FC<SchedulePostProps> = ({ onSuccess }) => {
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'warning'; text: string } | null>(null);
   const [showAI, setShowAI] = useState(false);
   const [aiPrompt, setAiPrompt] = useState<string>('');
+  const [visualSuggestion, setVisualSuggestion] = useState<string>('');
+  const [showImageGen, setShowImageGen] = useState(false);
 
   // Load AI prompt from cache/settings
   useEffect(() => {
@@ -45,9 +49,9 @@ const SchedulePost: React.FC<SchedulePostProps> = ({ onSuccess }) => {
 
   // Horários em que as funções executam (UTC)
   const scheduledTimes = [
-    { value: '09:00', label: '09:00 UTC (9h da manhã)' },
-    { value: '12:00', label: '12:00 UTC (Meio-dia)' },
-    { value: '18:00', label: '18:00 UTC (6h da tarde)' }
+    { value: '09:09', label: '09:09 UTC (Morning)' },
+    { value: '12:12', label: '12:12 UTC (Noon)' },
+    { value: '18:18', label: '18:18 UTC (Evening)' }
   ];
 
   const togglePlatform = (platform: Platform) => {
@@ -321,15 +325,18 @@ const SchedulePost: React.FC<SchedulePostProps> = ({ onSuccess }) => {
       <div className="mb-4">
         <div className="flex items-center justify-between mb-3">
           <label className="block text-sm font-medium text-gray-300">Content</label>
-          {content.trim() && (
-            <button
-              onClick={() => setShowAI(true)}
-              className="text-xs px-2 py-1 bg-gradient-to-r from-emerald-500/20 to-teal-500/20 hover:from-emerald-500/30 hover:to-teal-500/30 border border-emerald-500/30 text-emerald-300 rounded-md flex items-center gap-1 transition-all"
-            >
-              <Sparkles className="w-3 h-3" />
-              Improve with AI
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            <CalendarImport onImport={(text) => setContent(text)} />
+            {content.trim() && (
+              <button
+                onClick={() => setShowAI(true)}
+                className="text-xs px-2 py-1 bg-gradient-to-r from-emerald-500/20 to-teal-500/20 hover:from-emerald-500/30 hover:to-teal-500/30 border border-emerald-500/30 text-emerald-300 rounded-md flex items-center gap-1 transition-all"
+              >
+                <Sparkles className="w-3 h-3" />
+                Improve with AI
+              </button>
+            )}
+          </div>
         </div>
         <textarea
           value={content}
@@ -342,6 +349,37 @@ const SchedulePost: React.FC<SchedulePostProps> = ({ onSuccess }) => {
           <span>LinkedIn: ~1300 | X: ~280</span>
         </div>
       </div>
+
+      {/* Visual Suggestion from AI */}
+      {visualSuggestion && (
+        <div className="mb-4 p-4 bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/30 rounded-lg">
+          <div className="flex items-start gap-3">
+            <div className="flex-1">
+              <label className="flex items-center gap-2 text-sm font-medium text-purple-300 mb-1">
+                🎨 AI Visual Suggestion
+                <span className="text-xs text-purple-400 font-normal">(Click to generate image)</span>
+              </label>
+              <p className="text-sm text-gray-300 bg-gray-800/50 p-2 rounded border border-gray-600/50 whitespace-pre-wrap">
+                {visualSuggestion}
+              </p>
+              <button
+                onClick={() => setVisualSuggestion('')}
+                className="text-xs text-gray-500 hover:text-gray-400 mt-1 flex items-center gap-1"
+              >
+                <X className="w-3 h-3" />
+                Clear suggestion
+              </button>
+            </div>
+            <button
+              onClick={() => setShowImageGen(true)}
+              className="px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white text-sm font-medium rounded-lg flex items-center gap-2 transition-all"
+            >
+              <Sparkles className="w-4 h-4" />
+              Generate Image
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Date & Time */}
       <div className="grid grid-cols-2 gap-4 mb-4">
@@ -541,8 +579,54 @@ const SchedulePost: React.FC<SchedulePostProps> = ({ onSuccess }) => {
         <AIContentGenerator
           originalContent={content}
           userPrompt={aiPrompt}
-          onAcceptSuggestion={(newContent) => setContent(newContent)}
+          onAcceptSuggestion={(newContent, visual) => {
+            setContent(newContent);
+            if (visual) {
+              setVisualSuggestion(visual);
+              console.log('🎨 Visual suggestion saved:', visual);
+            }
+          }}
           onClose={() => setShowAI(false)}
+        />
+      )}
+
+      {/* Image Generator Modal */}
+      {showImageGen && visualSuggestion && (
+        <ImageGeneratorModal
+          prompt={visualSuggestion}
+          onAcceptImage={async (imageUrl, imageFile) => {
+            // Upload AI-generated image to Firebase Storage first
+            setUploading(true);
+            setMessage({ type: 'warning', text: 'Uploading generated image...' });
+            
+            try {
+              const formData = new FormData();
+              formData.append('file', imageFile);
+              formData.append('postType', postType);
+
+              const response = await fetch('/api/storage/upload', {
+                method: 'POST',
+                body: formData,
+              });
+
+              const result = await response.json();
+              if (result.success) {
+                setMediaUrl(result.url);
+                setMediaFile(imageFile);
+                setMediaType('image');
+                setMessage({ type: 'success', text: '✅ AI image uploaded successfully!' });
+                console.log('✅ AI-generated image uploaded to Storage:', result.url);
+              } else {
+                setMessage({ type: 'error', text: `Upload failed: ${result.error}` });
+              }
+            } catch (error) {
+              console.error('❌ Failed to upload AI image:', error);
+              setMessage({ type: 'error', text: 'Error uploading image. Please try again.' });
+            } finally {
+              setUploading(false);
+            }
+          }}
+          onClose={() => setShowImageGen(false)}
         />
       )}
     </div>

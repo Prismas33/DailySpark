@@ -74,11 +74,9 @@ export async function processSocialMediaQueue(): Promise<void> {
           x: false
         };
         
-        // Create job object for posting functions (they expect this format)
+        // Create job object for posting functions
         const jobForSend: SocialMediaJob = {
           id: post.id,
-          title: '',
-          companyName: '',
           shortDescription: post.content,
           mediaUrl: post.mediaUrl || ''
         };
@@ -250,55 +248,55 @@ export async function processSocialMediaQueue(): Promise<void> {
 }
 
 /**
- * Função agendada para executar às 09:00 UTC
+ * Função agendada para executar às 09:09 UTC
  * Processa posts da fila de agendamento
  */
 export const scheduledSocialMediaQueue9AM = onSchedule(
   {
-    schedule: "0 9 * * *",
+    schedule: "9 9 * * *",
     timeZone: "UTC",
     memory: "256MiB",
     timeoutSeconds: 120,
   },
   async (event) => {
-    console.log('[SocialQueue] 09:00 UTC execution started');
+    console.log('[SocialQueue] 09:09 UTC execution started');
     await processSocialMediaQueue();
-    console.log('[SocialQueue] 09:00 UTC execution completed');
+    console.log('[SocialQueue] 09:09 UTC execution completed');
   }
 );
 
 /**
- * Função agendada para executar às 12:00 UTC  
+ * Função agendada para executar às 12:12 UTC  
  * Processa posts da fila de agendamento
  */
 export const scheduledSocialMediaQueue12PM = onSchedule(
   {
-    schedule: "0 12 * * *",
+    schedule: "12 12 * * *",
     timeZone: "UTC", 
     memory: "256MiB",
     timeoutSeconds: 120,
   },
   async (event) => {
-    console.log('[SocialQueue] 12:00 UTC execution started');
+    console.log('[SocialQueue] 12:12 UTC execution started');
     await processSocialMediaQueue();
-    console.log('[SocialQueue] 12:00 UTC execution completed');
+    console.log('[SocialQueue] 12:12 UTC execution completed');
   }
 );
 
 /**
- * Função agendada para executar às 18:00 UTC
+ * Função agendada para executar às 18:18 UTC
  * Processa posts da fila de agendamento
  */
 export const scheduledSocialMediaQueue6PM = onSchedule(
   {
-    schedule: "0 18 * * *",
+    schedule: "18 18 * * *",
     timeZone: "UTC",
     memory: "256MiB", 
     timeoutSeconds: 120,
   },
   async (event) => {
-    console.log('[SocialQueue] 18:00 UTC execution started');
+    console.log('[SocialQueue] 18:18 UTC execution started');
     await processSocialMediaQueue();
-    console.log('[SocialQueue] 18:00 UTC execution completed');
+    console.log('[SocialQueue] 18:18 UTC execution completed');
   }
 );

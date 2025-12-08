@@ -49,9 +49,9 @@ export async function POST(req: NextRequest) {
         model: 'dall-e-3',
         prompt: prompt,
         n: 1, // DALL-E 3 only supports n=1
-        size: '1024x1024', // Options: 1024x1024, 1024x1792, 1792x1024
+        size: '1792x1024', // 16:9 landscape format - ideal for social media
         quality: 'standard', // Options: 'standard' or 'hd' (hd costs more)
-        response_format: 'url', // Get URL instead of base64
+        response_format: 'b64_json', // Get base64 to avoid CORS issues
       }),
     });
 
@@ -112,22 +112,25 @@ export async function POST(req: NextRequest) {
     }
 
     const data = await openaiResponse.json();
-    const imageUrl = data.data[0]?.url;
+    const b64Image = data.data[0]?.b64_json;
     const revisedPrompt = data.data[0]?.revised_prompt; // DALL-E 3 may revise your prompt
 
-    if (!imageUrl) {
+    if (!b64Image) {
       return NextResponse.json({ error: 'No image generated' }, { status: 500 });
     }
 
-    console.log('✅ Image generated successfully:', imageUrl);
+    // Convert base64 to data URL for frontend use
+    const imageUrl = `data:image/png;base64,${b64Image}`;
+
+    console.log('✅ Image generated successfully (base64)');
 
     return NextResponse.json({
       success: true,
       imageUrl,
       revisedPrompt, // What DALL-E 3 actually used (can be different from input)
       model: 'dall-e-3',
-      size: '1024x1024',
-      cost: 0.040, // Approximate cost in USD
+      size: '1792x1024',
+      cost: 0.080, // Approximate cost in USD (landscape costs more)
     });
 
   } catch (error: any) {

@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Sparkles, X } from 'lucide-react';
 import AIContentGenerator from '@/components/AIContentGenerator';
 import ImageGeneratorModal from '@/components/ImageGeneratorModal';
+import CalendarImport from './CalendarImport';
 import { CacheService, CACHE_KEYS } from '@/lib/cacheService';
 
 type SocialMediaPlatform = 'linkedin' | 'x' | 'facebook' | 'instagram';
@@ -318,25 +319,28 @@ const ManualPost: React.FC = () => {
       <div className="mb-4">
         <div className="flex items-center justify-between mb-1.5">
           <label className="block text-sm font-medium text-gray-300">Content</label>
-          {content.trim() && (
-            <button
-              onClick={() => {
-                console.log('🎯 Opening AI modal with prompt:', {
-                  hasPrompt: !!aiPrompt,
-                  promptLength: aiPrompt?.length || 0,
-                  promptPreview: aiPrompt ? aiPrompt.substring(0, 50) + '...' : 'EMPTY'
-                });
-                setShowAI(true);
-              }}
-              className="text-xs px-2 py-1 bg-gradient-to-r from-emerald-500/20 to-teal-500/20 hover:from-emerald-500/30 hover:to-teal-500/30 border border-emerald-500/30 text-emerald-300 rounded-md flex items-center gap-1 transition-all"
-            >
-              <Sparkles className="w-3 h-3" />
-              Improve with AI
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            <CalendarImport onImport={(text) => setContent(text)} />
+            {content.trim() && (
+              <button
+                onClick={() => {
+                  console.log('🎯 Opening AI modal with prompt:', {
+                    hasPrompt: !!aiPrompt,
+                    promptLength: aiPrompt?.length || 0,
+                    promptPreview: aiPrompt ? aiPrompt.substring(0, 50) + '...' : 'EMPTY'
+                  });
+                  setShowAI(true);
+                }}
+                className="text-xs px-2 py-1 bg-gradient-to-r from-emerald-500/20 to-teal-500/20 hover:from-emerald-500/30 hover:to-teal-500/30 border border-emerald-500/30 text-emerald-300 rounded-md flex items-center gap-1 transition-all"
+              >
+                <Sparkles className="w-3 h-3" />
+                Improve with AI
+              </button>
+            )}
+          </div>
         </div>
         <textarea
-          className="w-full h-32 p-3 bg-gray-800/50 border border-gray-600/50 rounded-lg text-white placeholder-gray-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 focus:outline-none resize-none transition-all"
+          className="w-full h-48 p-3 bg-gray-800/50 border border-gray-600/50 rounded-lg text-white placeholder-gray-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 focus:outline-none resize-y transition-all"
           placeholder="What do you want to share?"
           value={content}
           onChange={(e) => setContent(e.target.value)}
@@ -568,6 +572,9 @@ const ManualPost: React.FC = () => {
           originalContent={content}
           userPrompt={aiPrompt}
           onAcceptSuggestion={(newContent, visual) => {
+            console.log('📝 Received content from AI:', JSON.stringify(newContent));
+            console.log('📝 Content has newlines:', newContent.includes('\n'));
+            console.log('📝 Content has double newlines:', newContent.includes('\n\n'));
             setContent(newContent);
             if (visual) {
               setVisualSuggestion(visual);
@@ -582,11 +589,37 @@ const ManualPost: React.FC = () => {
       {showImageGen && visualSuggestion && (
         <ImageGeneratorModal
           prompt={visualSuggestion}
-          onAcceptImage={(imageUrl, imageFile) => {
-            setMediaUrl(imageUrl);
-            setMediaFile(imageFile);
-            setMediaType('image');
-            console.log('✅ AI-generated image attached:', imageUrl);
+          onAcceptImage={async (imageUrl, imageFile) => {
+            // Upload AI-generated image to Firebase Storage first
+            setUploading(true);
+            setMessage({ type: 'warning', text: 'Uploading generated image...' });
+            
+            try {
+              const formData = new FormData();
+              formData.append('file', imageFile);
+              formData.append('postType', 'post');
+
+              const response = await fetch('/api/storage/upload', {
+                method: 'POST',
+                body: formData,
+              });
+
+              const result = await response.json();
+              if (result.success) {
+                setMediaUrl(result.url);
+                setMediaFile(imageFile);
+                setMediaType('image');
+                setMessage({ type: 'success', text: '✅ AI image uploaded successfully!' });
+                console.log('✅ AI-generated image uploaded to Storage:', result.url);
+              } else {
+                setMessage({ type: 'error', text: `Upload failed: ${result.error}` });
+              }
+            } catch (error) {
+              console.error('❌ Failed to upload AI image:', error);
+              setMessage({ type: 'error', text: 'Error uploading image. Please try again.' });
+            } finally {
+              setUploading(false);
+            }
           }}
           onClose={() => setShowImageGen(false)}
         />

@@ -80,9 +80,24 @@ export default function ImageGeneratorModal({
     try {
       setLoading(true);
       
-      // Download image as blob
-      const response = await fetch(imageUrl);
-      const blob = await response.blob();
+      // Convert base64 data URL to blob
+      let blob: Blob;
+      
+      if (imageUrl.startsWith('data:')) {
+        // Handle base64 data URL
+        const base64Data = imageUrl.split(',')[1];
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        blob = new Blob([byteArray], { type: 'image/png' });
+      } else {
+        // Handle regular URL (fallback)
+        const response = await fetch(imageUrl);
+        blob = await response.blob();
+      }
       
       // Create File from blob
       const file = new File([blob], 'ai-generated-image.png', { type: 'image/png' });
@@ -90,8 +105,8 @@ export default function ImageGeneratorModal({
       onAcceptImage(imageUrl, file);
       onClose();
     } catch (err: any) {
-      console.error('❌ Failed to download image:', err);
-      setError('Failed to download image. Try again.');
+      console.error('❌ Failed to process image:', err);
+      setError('Failed to process image. Try again.');
     } finally {
       setLoading(false);
     }

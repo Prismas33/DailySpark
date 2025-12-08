@@ -2,16 +2,15 @@
 
 import React, { useState, useEffect } from 'react';
 import { User } from 'firebase/auth';
-import { Sparkles, Save } from 'lucide-react';
+import { Calendar, Save, Sparkles } from 'lucide-react';
 import { saveUserSettings, getUserSettings } from '@/lib/userProfile';
-import { CacheService, CACHE_KEYS, CACHE_TTL } from '@/lib/cacheService';
 
-interface AIConfigSectionProps {
+interface CalendarConfigSectionProps {
   user: User;
 }
 
-export default function AIConfigSection({ user }: AIConfigSectionProps) {
-  const [aiPrompt, setAiPrompt] = useState('');
+export default function CalendarConfigSection({ user }: CalendarConfigSectionProps) {
+  const [calendarPrompt, setCalendarPrompt] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -24,20 +23,9 @@ export default function AIConfigSection({ user }: AIConfigSectionProps) {
 
   const loadSettings = async () => {
     try {
-      // Try to get from cache first
-      const cachedSettings = CacheService.get<{ aiPrompt: string }>(CACHE_KEYS.AI_PROMPT);
-      if (cachedSettings?.aiPrompt) {
-        setAiPrompt(cachedSettings.aiPrompt);
-        setLoading(false);
-        return;
-      }
-
-      // If not in cache, fetch from API
       const settings = await getUserSettings(user.uid, user);
-      if (settings?.aiPrompt) {
-        setAiPrompt(settings.aiPrompt);
-        // Cache for 15 minutes
-        CacheService.set(CACHE_KEYS.AI_PROMPT, { aiPrompt: settings.aiPrompt }, CACHE_TTL.LONG);
+      if (settings?.calendarPrompt) {
+        setCalendarPrompt(settings.calendarPrompt);
       }
     } catch (error) {
       console.error('Failed to load settings:', error);
@@ -47,7 +35,7 @@ export default function AIConfigSection({ user }: AIConfigSectionProps) {
   };
 
   const handleSave = async () => {
-    if (aiPrompt.length > MAX_CHARS) {
+    if (calendarPrompt.length > MAX_CHARS) {
       setMessage({ type: 'error', text: `Prompt must be less than ${MAX_CHARS} characters` });
       return;
     }
@@ -57,13 +45,10 @@ export default function AIConfigSection({ user }: AIConfigSectionProps) {
 
     try {
       await saveUserSettings(user.uid, user, {
-        aiPrompt: aiPrompt.trim(),
+        calendarPrompt: calendarPrompt.trim(),
       });
       
-      // Update cache after successful save
-      CacheService.set(CACHE_KEYS.AI_PROMPT, { aiPrompt: aiPrompt.trim() }, CACHE_TTL.LONG);
-      
-      setMessage({ type: 'success', text: '✅ AI prompt saved successfully!' });
+      setMessage({ type: 'success', text: '✅ Calendar prompt saved successfully!' });
     } catch (error: any) {
       setMessage({ type: 'error', text: error.message || 'Failed to save prompt' });
     } finally {
@@ -75,7 +60,7 @@ export default function AIConfigSection({ user }: AIConfigSectionProps) {
     return (
       <div className="bg-gray-800/50 rounded-lg border border-gray-700/50 p-4">
         <div className="flex items-center justify-center py-8">
-          <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+          <div className="w-6 h-6 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
         </div>
       </div>
     );
@@ -84,8 +69,8 @@ export default function AIConfigSection({ user }: AIConfigSectionProps) {
   return (
     <div className="bg-gray-800/50 rounded-lg border border-gray-700/50 p-4">
       <h4 className="text-base font-bold text-white mb-3 flex items-center gap-2">
-        <Sparkles className="w-4 h-4 text-emerald-400" />
-        AI Configuration
+        <Calendar className="w-4 h-4 text-purple-400" />
+        Weekly Calendar Configuration
       </h4>
 
       {/* Message */}
@@ -102,28 +87,40 @@ export default function AIConfigSection({ user }: AIConfigSectionProps) {
       )}
 
       {/* Info */}
-      <div className="mb-3 p-2 bg-blue-500/10 border border-blue-500/30 rounded-lg">
-        <p className="text-xs text-blue-400">
-          💡 <strong>Tip:</strong> This prompt will be used by AI to generate posts in your style and tone. Be specific about your preferences, topics, and writing style.
+      <div className="mb-3 p-2 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+        <p className="text-xs text-purple-400">
+          📅 <strong>Tip:</strong> This prompt will be used to generate your weekly content calendar. Include your niche, topics you want to cover, posting style, and any specific themes for each day.
         </p>
       </div>
 
       {/* Prompt Textarea */}
       <div className="mb-3">
         <label className="block text-sm font-medium text-gray-300 mb-1.5">
-          Custom AI Prompt
+          Calendar Generation Prompt
         </label>
         <textarea
-          value={aiPrompt}
-          onChange={(e) => setAiPrompt(e.target.value)}
-          className="w-full h-40 px-3 py-2 bg-gray-900/50 border border-gray-600 rounded-lg text-white text-sm placeholder-gray-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 focus:outline-none resize-none"
-          placeholder="Example: Write professional posts about technology and software development. Use a friendly but authoritative tone. Include occasional emojis. Focus on practical tips and real-world examples..."
+          value={calendarPrompt}
+          onChange={(e) => setCalendarPrompt(e.target.value)}
+          className="w-full h-48 px-3 py-2 bg-gray-900/50 border border-gray-600 rounded-lg text-white text-sm placeholder-gray-500 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 focus:outline-none resize-none"
+          placeholder={`Example:
+I'm a tech entrepreneur. Generate a weekly calendar with:
+
+Monday: Motivation/productivity tips
+Tuesday: Tech industry insights
+Wednesday: Behind-the-scenes of my startup
+Thursday: Educational content about programming
+Friday: Weekend project ideas
+Saturday: Personal development
+Sunday: Week review and planning ahead
+
+Style: Professional but friendly, use emojis, include call-to-action.
+Focus on: AI, startups, coding, entrepreneurship.`}
         />
         <div className="flex justify-between items-center mt-1">
           <span className="text-xs text-gray-400">
-            {aiPrompt.length} / {MAX_CHARS} characters
+            {calendarPrompt.length} / {MAX_CHARS} characters
           </span>
-          {aiPrompt.length > MAX_CHARS && (
+          {calendarPrompt.length > MAX_CHARS && (
             <span className="text-xs text-red-400">Character limit exceeded!</span>
           )}
         </div>
@@ -131,19 +128,21 @@ export default function AIConfigSection({ user }: AIConfigSectionProps) {
 
       {/* Examples */}
       <div className="mb-3 p-2 bg-gray-900/50 border border-gray-700/50 rounded-lg">
-        <p className="text-xs font-medium text-gray-300 mb-1">Example prompts:</p>
+        <p className="text-xs font-medium text-gray-300 mb-1">Ideas for your calendar prompt:</p>
         <ul className="text-xs text-gray-400 space-y-1">
-          <li>• "Write posts about AI and machine learning for beginners, use simple language"</li>
-          <li>• "Professional business consultant tone, focus on leadership and productivity"</li>
-          <li>• "Creative designer sharing tips, use visual metaphors and emoji"</li>
+          <li>• Define themes for each day of the week</li>
+          <li>• Specify your industry/niche and target audience</li>
+          <li>• Include preferred tone (professional, casual, humorous)</li>
+          <li>• Mention types of content (tips, stories, questions, polls)</li>
+          <li>• Add any hashtags you always want to include</li>
         </ul>
       </div>
 
       {/* Save Button */}
       <button
         onClick={handleSave}
-        disabled={saving || aiPrompt.length > MAX_CHARS}
-        className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+        disabled={saving || calendarPrompt.length > MAX_CHARS}
+        className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {saving ? (
           <>
@@ -153,7 +152,7 @@ export default function AIConfigSection({ user }: AIConfigSectionProps) {
         ) : (
           <>
             <Save className="w-4 h-4" />
-            Save AI Prompt
+            Save Calendar Prompt
           </>
         )}
       </button>

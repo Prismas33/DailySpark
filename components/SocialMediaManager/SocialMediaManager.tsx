@@ -6,12 +6,13 @@ import SchedulePost from './SchedulePost';
 import QueueViewer from './QueueViewer';
 import PostHistoryViewer from './PostHistoryViewer';
 import Settings from './Settings';
+import WeeklyCalendarViewer from './WeeklyCalendarViewer';
 import UserDropdown from '@/components/UserDropdown';
 import WelcomeBanner from '@/components/WelcomeBanner';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { User } from 'firebase/auth';
 
-type TabType = 'manual' | 'schedule' | 'queue' | 'history' | 'settings';
+type TabType = 'manual' | 'schedule' | 'queue' | 'history' | 'calendar' | 'settings';
 
 interface SocialMediaManagerProps {
   user: User;
@@ -25,6 +26,7 @@ const SocialMediaManager: React.FC<SocialMediaManagerProps> = ({ user, onLogout 
   const tabs = [
     { id: 'manual' as TabType, label: 'Post Now', icon: '✍️' },
     { id: 'schedule' as TabType, label: 'Schedule', icon: '📅' },
+    { id: 'calendar' as TabType, label: 'Calendar', icon: '🗓️' },
     { id: 'queue' as TabType, label: 'Queue', icon: '📋' },
     { id: 'history' as TabType, label: 'History', icon: '📚' },
     { id: 'settings' as TabType, label: 'Settings', icon: '⚙️' }
@@ -36,6 +38,8 @@ const SocialMediaManager: React.FC<SocialMediaManagerProps> = ({ user, onLogout 
         return <ManualPost />;
       case 'schedule':
         return <SchedulePost />;
+      case 'calendar':
+        return <WeeklyCalendarViewer />;
       case 'queue':
         return <QueueViewer />;
       case 'history':
@@ -107,7 +111,7 @@ const SocialMediaManager: React.FC<SocialMediaManagerProps> = ({ user, onLogout 
 
       <div className="max-w-7xl mx-auto px-4 py-4 md:py-6">
         {/* Welcome Banner - only show on manual/schedule tabs, not on settings/history */}
-        {(activeTab === 'manual' || activeTab === 'schedule' || activeTab === 'queue') && (
+        {(activeTab === 'manual' || activeTab === 'schedule' || activeTab === 'queue' || activeTab === 'calendar') && (
           <WelcomeBanner user={user} />
         )}
 

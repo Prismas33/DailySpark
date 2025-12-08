@@ -6,10 +6,8 @@ import { TwitterApi } from 'twitter-api-v2';
 
 // Configurar CORS
 const allowedOrigins = [
-  'https://gate33.net',
-  'https://www.gate33.net',
-  'https://gate33.me',
-  'https://www.gate33.me'
+  'https://dailyspark.com',
+  'https://www.dailyspark.com'
 ];
 const corsHandler = (cors.default || cors)({
   origin: function (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {

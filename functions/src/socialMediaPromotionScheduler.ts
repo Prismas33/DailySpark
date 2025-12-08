@@ -1,8 +1,5 @@
-import { getFirestore } from "firebase-admin/firestore";
-// import { onSchedule } from "firebase-functions/v2/scheduler"; // Disabled - no longer using job scheduler
 import axios from 'axios';
 import { TwitterApi } from 'twitter-api-v2';
-import { logSystemActivity } from "./logSystem";
 
 // Social Media configuration - Using Firebase Functions config
 // Moved config loading inside functions to avoid initialization timeouts
@@ -199,11 +196,6 @@ async function postToLinkedIn(job: SocialMediaJob): Promise<boolean> {
       return false;
     }
     
-    if (!job.title || !job.companyName) {
-      console.error(`[SocialMedia] Cannot post job ${job.id} to LinkedIn: Missing title or companyName`);
-      return false;
-    }
-    
     // Validate token has required scopes
     const tokenValid = await validateLinkedInToken(LINKEDIN_ACCESS_TOKEN);
     if (!tokenValid) {
@@ -214,12 +206,13 @@ async function postToLinkedIn(job: SocialMediaJob): Promise<boolean> {
       return false;
     }
     
-    // Use custom message if present, else build default
-    const postText = job.shortDescription ||
-      `🚀 New job: ${job.title}\nCompany: ${job.companyName}` +
-      (job.location ? `\nLocation: ${job.location}` : '') +
-      (job.salary ? `\nSalary: ${job.salary}` : '') +
-      `\n\nSee details: https://gate33.net/jobs/${job.id}`;
+    // Use shortDescription (required for social media posts)
+    if (!job.shortDescription) {
+      console.error(`[SocialMedia] Cannot post to LinkedIn: Missing shortDescription for job ${job.id}`);
+      return false;
+    }
+    
+    const postText = job.shortDescription;
     
     // Use person ID from environment (Personal Profile)
     const personId = LINKEDIN_PERSON_ID;
@@ -265,7 +258,7 @@ async function postToLinkedIn(job: SocialMediaJob): Promise<boolean> {
                 },
                 media: mediaUrn,
                 title: {
-                  text: job.title || 'Post'
+                  text: 'Social Media Post'
                 }
               }
             ]
@@ -310,7 +303,7 @@ async function postToLinkedIn(job: SocialMediaJob): Promise<boolean> {
       }
     );
     if (response.status === 201) {
-      console.log(`[SocialMedia] Job "${job.title}" successfully posted to LinkedIn`);
+      console.log(`[SocialMedia] Successfully posted to LinkedIn`);
       return true;
     } else {
       console.error(`[SocialMedia] Failed to post job to LinkedIn:`, response.data);
@@ -332,7 +325,6 @@ async function postToLinkedIn(job: SocialMediaJob): Promise<boolean> {
 async function postToX(job: SocialMediaJob): Promise<boolean> {
   try {
     console.log('🟢 [TWITTER] Function postToX called with job:', job.id);
-    console.log('🟢 [TWITTER] Job title:', job.title);
     
     // Get credentials from environment variables (Firebase Functions v2 compatible)
     // Get credentials from environment variables
@@ -367,11 +359,6 @@ async function postToX(job: SocialMediaJob): Promise<boolean> {
       return false;
     }
     
-    if (!job.title || !job.companyName) {
-      console.error(`[SocialMedia] Cannot post job ${job.id} to X: Missing title or companyName`);
-      return false;
-    }
-    
     // Initialize Twitter client - MUST use OAuth 1.0a for posting (Bearer Token doesn't work)
     let twitterClient: TwitterApi;
     console.log('[SocialMedia] Using OAuth 1.0a authentication (required for posting)');
@@ -395,19 +382,24 @@ async function postToX(job: SocialMediaJob): Promise<boolean> {
       return false;
     }
     
-    // Use custom message if present, else build default
-    let postText = job.shortDescription || formatXMessage(job);
-    
-    // X has 280 character limit, so we need to truncate if necessary
-    if (postText.length > 280) {
-      // Reserve space for job link
-      const jobUrl = `https://gate33.net/jobs/${job.id}`;
-      const maxTextLength = 280 - jobUrl.length - 3; // 3 for "..." or spaces
-      postText = postText.substring(0, maxTextLength).trim() + '...';
-      postText += ` ${jobUrl}`;
+    // Use shortDescription (required for social media posts)
+    if (!job.shortDescription) {
+      console.error(`[SocialMedia] Cannot post to X: Missing shortDescription for job ${job.id}`);
+      return false;
     }
     
-    console.log('[SocialMedia] Posting to X:', { text: postText, length: postText.length });
+    let postText = job.shortDescription;
+    
+    // Twitter Blue/Premium allows up to 25,000 characters
+    // Free tier has 280 character limit
+    // We'll use the full content without truncating (assuming Blue subscription)
+    const MAX_TWEET_LENGTH = 25000;
+    if (postText.length > MAX_TWEET_LENGTH) {
+      console.warn(`[SocialMedia] Tweet content exceeds ${MAX_TWEET_LENGTH} characters, truncating...`);
+      postText = postText.substring(0, MAX_TWEET_LENGTH - 3).trim() + '...';
+    }
+    
+    console.log('[SocialMedia] Posting to X:', { text: postText.substring(0, 100) + '...', length: postText.length });
     
     // Post the tweet
     let tweetData: any = { text: postText };
@@ -486,169 +478,12 @@ async function postToX(job: SocialMediaJob): Promise<boolean> {
   }
 }
 
-// Function to format the message for X (Twitter)
-function formatXMessage(job: SocialMediaJob): string {
-  const baseUrl = 'https://gate33.net';
-  const jobUrl = `${baseUrl}/jobs/${job.id}`;
-  
-  // Build concise message for X (280 char limit)
-  let message = `🚀 ${job.title}`;
-  if (job.companyName) {
-    message += ` at ${job.companyName}`;
-  }
-  
-  // Add location if available and space permits
-  if (job.location && (message.length + job.location.length + 4) < 200) {
-    message += ` in ${job.location}`;
-  }
-  
-  // Add salary if available and space permits
-  if (job.salary && (message.length + job.salary.length + 10) < 200) {
-    message += `\n💰 ${job.salary}`;
-  }
-  
-  message += `\n\n${jobUrl}`;
-  message += '\n\n#Jobs #Gate33 #Opportunity';
-  
-  return message;
-}
-
 // Export utility functions for external use
 export { postToLinkedIn, postToX };
 
-// Function to render a custom template
-export function renderTemplateFromJob(template: string, job: SocialMediaJob): string {
-  return template
-    .replace(/{{\s*title\s*}}/gi, job.title || "")
-    .replace(/{{\s*companyName\s*}}/gi, job.companyName || "")
-    .replace(/{{\s*mediaUrl\s*}}/gi, job.mediaUrl || "")
-    .replace(/{{\s*id\s*}}/gi, job.id || "")
-    .replace(/{{\s*jobUrl\s*}}/gi, `https://gate33.net/jobs/${job.id}`); // Fixed to .net
-}
-
-// SocialMediaJob interface with additional fields
+// SocialMediaJob interface - simplified for social media posts only
 export interface SocialMediaJob {
   id: string;
-  title?: string;
-  companyName?: string;
-  socialMediaPromotion?: number;
-  socialMediaPromotionCount?: number;
-  socialMediaPromotionLastSent?: string | null;
-  createdAt?: string | Date;
-  expiresAt?: string | Date;
-  duration?: number; // in days, if exists
-  location?: string;
-  salary?: string;
-  shortDescription?: string;
-  jobType?: string;
+  shortDescription?: string; // The actual post content
   mediaUrl?: string; // media/image URL for social post
-  // other relevant fields
-}
-
-function getJobLifetimeDays(job: SocialMediaJob): number {
-  if (job.createdAt && job.expiresAt) {
-    const start = new Date(job.createdAt);
-    const end = new Date(job.expiresAt);
-    return Math.max(1, Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
-  }
-  if (job.duration) return job.duration;
-  // fallback: 30 days
-  return 30;
-}
-
-function getMinIntervalHours(job: SocialMediaJob): number {
-  const totalPosts = job.socialMediaPromotion ?? 1;
-  const lifetimeDays = getJobLifetimeDays(job);
-  // Distribute equally over the job's lifetime
-  return (lifetimeDays / totalPosts) * 24;
-}
-
-function canSendAgainByPlan(job: SocialMediaJob): boolean {
-  const lastSent = job.socialMediaPromotionLastSent ? new Date(job.socialMediaPromotionLastSent) : null;
-  const minIntervalHours = getMinIntervalHours(job);
-  if (!lastSent) return true;
-  const now = new Date();
-  const diff = (now.getTime() - lastSent.getTime()) / (1000 * 60 * 60);
-  return diff >= minIntervalHours;
-}
-
-export async function runSocialMediaPromotionScheduler() {
-  const db = getFirestore();
-  const jobsRef = db.collection('jobs');
-  const jobsSnapshot = await jobsRef.get();
-  const jobs = jobsSnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })) as SocialMediaJob[];
-
-  // Fetch centralized template and mediaUrl
-  const templateSnap = await db.collection("config").doc("socialMediaTemplate").get();
-  const templateData = (templateSnap && templateSnap.exists && typeof templateSnap.data === 'function')
-    ? templateSnap.data() ?? {}
-    : {};
-  const template = templateData.template ||
-    "🚀 New job: {{title}} at {{companyName}}!\nCheck it out and apply now!\n{{jobUrl}}";
-  const templateMediaUrl = templateData.mediaUrl || "";
-
-  for (const job of jobs) {
-    if (
-      (job.socialMediaPromotion ?? 0) > 0 &&
-      (job.socialMediaPromotionCount ?? 0) < (job.socialMediaPromotion ?? 0) &&
-      canSendAgainByPlan(job)
-    ) {
-      // Render message and prepare standardized object
-      const message = renderTemplateFromJob(template, job);
-      const jobForSend = { ...job, shortDescription: message, mediaUrl: job.mediaUrl || templateMediaUrl };
-      // Post to social media
-      const linkedInSuccess = await postToLinkedIn(jobForSend);
-      const xSuccess = await postToX(jobForSend);
-
-      // Atualiza o contador se pelo menos um envio for bem-sucedido
-      if (linkedInSuccess || xSuccess) {
-        await jobsRef.doc(job.id).update({
-          socialMediaPromotionCount: (job.socialMediaPromotionCount ?? 0) + 1,
-          socialMediaPromotionLastSent: new Date().toISOString(),
-        });
-        console.log(
-          `[SocialMedia] Job ${job.title} promovido (` +
-          `${(job.socialMediaPromotionCount ?? 0) + 1}/` +
-          `${job.socialMediaPromotion})`
-        );
-        // Log system activity for auditing
-        await logSystemActivity(
-          "system",
-          "SocialMediaScheduler",
-          {
-            jobId: job.id,
-            jobTitle: job.title,
-            companyName: job.companyName,
-            promotedPlatforms: [
-              linkedInSuccess ? "LinkedIn" : null,
-              xSuccess ? "X" : null
-            ].filter(Boolean),
-            timestamp: new Date().toISOString(),
-            promotionCount: (job.socialMediaPromotionCount ?? 0) + 1,
-            planLimit: job.socialMediaPromotion ?? 0
-          }
-        );
-      }
-    }
-  }
-  console.log('[SocialMedia] Scheduler run complete.');
-}
-
-// ⚠️ DISABLED: Job promotion scheduler (system no longer uses jobs, only social media posts)
-// If you need to re-enable job promotion in the future, uncomment below:
-/*
-export const scheduledSocialMediaPromotion = onSchedule(
-  {
-    schedule: "every 8 hours",
-    timeZone: "Europe/Lisbon" // Lisbon timezone
-  },
-  async (event) => {
-    await runSocialMediaPromotionScheduler();
-  }
-);
-*/
-
-// If run directly, execute:
-if (require.main === module) {
-  runSocialMediaPromotionScheduler().then(() => process.exit(0));
 }

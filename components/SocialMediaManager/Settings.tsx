@@ -5,6 +5,7 @@ import { Settings as SettingsIcon } from 'lucide-react';
 import ProfileSection from './SettingsSections/ProfileSection';
 import SecuritySection from './SettingsSections/SecuritySection';
 import AIConfigSection from './SettingsSections/AIConfigSection';
+import CalendarConfigSection from './SettingsSections/CalendarConfigSection';
 import PlatformsSection from './SettingsSections/PlatformsSection';
 
 export default function Settings() {
@@ -65,6 +66,7 @@ export default function Settings() {
 
         <div className="space-y-4">
           <AIConfigSection user={currentUser} />
+          <CalendarConfigSection user={currentUser} />
           <PlatformsSection />
         </div>
       </div>
